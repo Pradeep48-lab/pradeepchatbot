@@ -1,0 +1,23 @@
+name: Deploy to azure
+
+on:
+    push:
+        branches:
+            -main
+    workflow_dispatch:
+
+env:
+    Resource_Group_Name: "Pradeep"
+    Location: "South India"
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+
+    steps:
+       - name: Clone repository
+        uses: actions/checkout@v4
+
+       - name: Azure login
+        uses: Azure/login@v2
+
