@@ -1,28 +1,33 @@
 param location string
 param storageAccountName string
-param containerName string
+param storageContainerName string
 
-resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
   location: location
-  sku: { name: 'Standard_LRS' }
+  sku: {
+    name: 'Standard_LRS'
+  }
   kind: 'StorageV2'
   properties: {
-    accessTier: 'Hot'
     allowBlobPublicAccess: false
     minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
   }
 }
 
 resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
-  parent: storage
+  parent: storageAccount
   name: 'default'
 }
 
 resource container 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
   parent: blobService
-  name: containerName
-  properties: { publicAccess: 'None' }
+  name: storageContainerName
+  properties: {
+    publicAccess: 'None'
+  }
 }
 
-output id string = storage.id
+output id string = storageAccount.id
+output name string = storageAccount.name

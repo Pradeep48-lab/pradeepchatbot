@@ -1,46 +1,26 @@
-targetScope = 'resourceGroup'
-
-@description('Azure Region for all resources')
 param location string
-
-@description('Storage Account name for raw documents')
 param storageAccountName string
-
-@description('Storage container name')
-param storageContainerName string = 'documents'
-
-@description('Azure OpenAI Account name')
+param storageContainerName string
 param openAiName string
-
-@description('Azure AI Search service name')
 param searchServiceName string
-
-@description('Cosmos DB account name')
 param cosmosAccountName string
-
-@description('App Service Plan name')
 param appServicePlanName string
-
-@description('App Service Web App name')
 param appServiceName string
-
-@description('Entra ID App Registration Client ID for Easy Auth')
 param entraClientId string
-
-@description('Entra ID Tenant ID for Easy Auth')
-param entraTenantId string = tenant().tenantId
+param entraTenantId string
+param githubActionPrincipalId string
 
 module storage 'modules/storage.bicep' = {
   name: 'storageDeploy'
   params: {
     location: location
     storageAccountName: storageAccountName
-    containerName: storageContainerName
+    storageContainerName: storageContainerName
   }
 }
 
-module openAi 'modules/openai.bicep' = {
-  name: 'openAiDeploy'
+module openai 'modules/openai.bicep' = {
+  name: 'openaiDeploy'
   params: {
     location: location
     openAiName: openAiName
@@ -59,7 +39,7 @@ module cosmos 'modules/cosmos.bicep' = {
   name: 'cosmosDeploy'
   params: {
     location: location
-    accountName: cosmosAccountName
+    cosmosAccountName: cosmosAccountName
   }
 }
 
@@ -69,15 +49,15 @@ module appService 'modules/appservice.bicep' = {
     location: location
     appServicePlanName: appServicePlanName
     appServiceName: appServiceName
-    openAiEndpoint: openAi.outputs.endpoint
-    chatDeployment: openAi.outputs.chatDeploymentName
-    embeddingDeployment: openAi.outputs.embeddingDeploymentName
-    searchEndpoint: search.outputs.endpoint
-    cosmosEndpoint: cosmos.outputs.endpoint
-    cosmosDbName: cosmos.outputs.databaseName
-    cosmosContainer: cosmos.outputs.containerName
     entraClientId: entraClientId
     entraTenantId: entraTenantId
+    openAiEndpoint: openai.outputs.endpoint
+    chatDeployment: 'chat'
+    embeddingDeployment: 'embedding'
+    searchEndpoint: search.outputs.endpoint
+    cosmosEndpoint: cosmos.outputs.endpoint
+    cosmosDbName: 'chatdb'
+    cosmosContainer: 'history'
   }
 }
 
@@ -86,11 +66,10 @@ module roles 'modules/roles.bicep' = {
   params: {
     appPrincipalId: appService.outputs.principalId
     searchPrincipalId: search.outputs.principalId
+    githubActionPrincipalId: githubActionPrincipalId
     storageAccountId: storage.outputs.id
-    openAiAccountId: openAi.outputs.id
+    openAiAccountId: openai.outputs.id
     searchAccountId: search.outputs.id
     cosmosAccountId: cosmos.outputs.id
   }
 }
-
-output appUrl string = 'https://${appService.outputs.defaultHostName}'

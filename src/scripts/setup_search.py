@@ -38,7 +38,6 @@ def setup_search_pipeline():
     index_client = SearchIndexClient(endpoint=search_endpoint, credential=credential)
     indexer_client = SearchIndexerClient(endpoint=search_endpoint, credential=credential)
 
-    # Reusable Managed Identity object for the SDK
     managed_identity = SearchIndexerDataIdentity(odata_type="#Microsoft.Azure.Search.ManagedServiceIdentity")
 
     print("1. Creating Data Source...")
@@ -71,9 +70,9 @@ def setup_search_pipeline():
         vectorizers=[AzureOpenAIVectorizer(
             vectorizer_name="my-openai",
             parameters=AzureOpenAIVectorizerParameters(
-                resource_url=openai_endpoint,                   # FIXED: Renamed from resource_uri
-                deployment_name=openai_embedding_deployment,    # FIXED: Renamed from deployment_id
-                auth_identity=managed_identity                  # FIXED: Ensures user queries use Managed Identity
+                resource_url=openai_endpoint,                   
+                deployment_name=openai_embedding_deployment,    
+                auth_identity=managed_identity                  
             )
         )]
     )
@@ -93,12 +92,12 @@ def setup_search_pipeline():
     
     embedding_skill = AzureOpenAIEmbeddingSkill(
         name="Embedder",
-        resource_url=openai_endpoint,                   # FIXED: Renamed from resource_uri
-        deployment_name=openai_embedding_deployment,    # FIXED: Renamed from deployment_id
+        resource_url=openai_endpoint,                   
+        deployment_name=openai_embedding_deployment,    
         dimensions=3072,
         inputs=[{"name": "text", "source": "/document/pages/*"}],
         outputs=[{"name": "embedding", "targetName": "vector"}],
-        auth_identity=managed_identity                  # FIXED: Uses correct Managed Identity object
+        auth_identity=managed_identity                  
     )
 
     skillset = SearchIndexerSkillset(

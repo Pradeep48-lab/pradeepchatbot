@@ -1,7 +1,7 @@
 name: Deploy Azure RAG Infrastructure
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -21,7 +21,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-
       - name: Deploy Bicep Infrastructure
         uses: azure/arm-deploy@v2
         with:
@@ -40,6 +39,7 @@ jobs:
             appServiceName=${{ vars.APP_SERVICE_NAME }}
             entraClientId=${{ secrets.AZURE_CLIENT_ID }}
             entraTenantId=${{ secrets.AZURE_TENANT_ID }}
+            githubActionPrincipalId=4e29e7e5-3702-4584-8d73-58b6be4f5e4a
           failOnStdErr: false
 
       - name: Set up Python
