@@ -5,9 +5,10 @@ param openAiAccountId string
 param searchAccountId string
 param cosmosAccountId string
 
-var roleCognitiveServicesOpenAIUser = '5e0bd9bd-7b91-4f2e-ab4a-3d97858e0dec'
-var roleSearchIndexDataReader = '1407120a-a4aa-4278-889e-ab20585c4513'
-var roleStorageBlobDataReader = '2a2b9908-6ea1-492a-b753-b2215406b747'
+// CORRECTED GUIDs
+var roleCognitiveServicesOpenAIUser = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+var roleSearchIndexDataReader = '1407120a-92aa-4202-b7e9-c0e197c71c8f'
+var roleStorageBlobDataReader = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
 var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
 
 // 1. Reference the existing resources to use as scopes
