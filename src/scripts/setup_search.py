@@ -12,7 +12,6 @@ from azure.search.documents.indexes.models import (
     VectorSearchProfile,
     AzureOpenAIVectorizer,
     AzureOpenAIVectorizerParameters,
-    SearchIndexerDataIdentity,
     SearchIndexerDataSourceConnection,
     SearchIndexerDataContainer,
     SplitSkill,
@@ -37,8 +36,6 @@ def setup_search_pipeline():
     credential = DefaultAzureCredential()
     index_client = SearchIndexClient(endpoint=search_endpoint, credential=credential)
     indexer_client = SearchIndexerClient(endpoint=search_endpoint, credential=credential)
-
-    managed_identity = SearchIndexerDataIdentity(odata_type="#Microsoft.Azure.Search.ManagedServiceIdentity")
 
     print("1. Creating Data Source...")
     ds_conn = SearchIndexerDataSourceConnection(
@@ -71,8 +68,8 @@ def setup_search_pipeline():
             vectorizer_name="my-openai",
             parameters=AzureOpenAIVectorizerParameters(
                 resource_url=openai_endpoint,                   
-                deployment_name=openai_embedding_deployment,    
-                auth_identity=managed_identity                  
+                deployment_name=openai_embedding_deployment
+                # auth_identity removed: automatically defaults to system-assigned identity
             )
         )]
     )
@@ -96,8 +93,8 @@ def setup_search_pipeline():
         deployment_name=openai_embedding_deployment,    
         dimensions=3072,
         inputs=[{"name": "text", "source": "/document/pages/*"}],
-        outputs=[{"name": "embedding", "targetName": "vector"}],
-        auth_identity=managed_identity                  
+        outputs=[{"name": "embedding", "targetName": "vector"}]
+        # auth_identity removed: automatically defaults to system-assigned identity
     )
 
     skillset = SearchIndexerSkillset(
