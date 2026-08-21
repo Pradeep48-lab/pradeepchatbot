@@ -69,7 +69,6 @@ def setup_search_pipeline():
             parameters=AzureOpenAIVectorizerParameters(
                 resource_url=openai_endpoint,                   
                 deployment_name=openai_embedding_deployment
-                # auth_identity removed: automatically defaults to system-assigned identity
             )
         )]
     )
@@ -94,7 +93,6 @@ def setup_search_pipeline():
         dimensions=3072,
         inputs=[{"name": "text", "source": "/document/pages/*"}],
         outputs=[{"name": "embedding", "targetName": "vector"}]
-        # auth_identity removed: automatically defaults to system-assigned identity
     )
 
     skillset = SearchIndexerSkillset(
