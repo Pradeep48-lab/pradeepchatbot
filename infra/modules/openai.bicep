@@ -17,7 +17,7 @@ resource chatDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-1
   name: 'chat'
   sku: { name: 'Standard', capacity: 20 }
   properties: {
-    model: { format: 'OpenAI', name: 'gpt-4o-mini', version: '2024-07-18' }
+    model: { format: 'OpenAI', name: 'gpt-5.5', version: '2026-04-24' }
   }
 }
 
@@ -26,7 +26,7 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   name: 'embedding'
   sku: { name: 'Standard', capacity: 20 }
   properties: {
-    model: { format: 'OpenAI', name: 'text-embedding-3-small', version: '1' }
+    model: { format: 'OpenAI', name: 'text-embedding-3-large', version: '1' }
   }
   dependsOn: [ chatDeployment ]
 }

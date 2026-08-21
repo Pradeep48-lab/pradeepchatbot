@@ -54,7 +54,8 @@ resource authSettings 'Microsoft.Web/sites/config@2023-12-01' = {
         enabled: true
         registration: {
           clientId: entraClientId
-          openIdIssuer: 'https://login.microsoftonline.com/${entraTenantId}/v2.0'
+          // FIXED: Removed the hardcoded login.microsoftonline.com URL
+          openIdIssuer: '${environment().authentication.loginEndpoint}${entraTenantId}/v2.0'
         }
       }
     }
