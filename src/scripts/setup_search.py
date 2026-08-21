@@ -68,7 +68,8 @@ def setup_search_pipeline():
             vectorizer_name="my-openai",
             parameters=AzureOpenAIVectorizerParameters(
                 resource_url=openai_endpoint,                   
-                deployment_name=openai_embedding_deployment
+                deployment_name=openai_embedding_deployment,
+                model_name="text-embedding-3-large"  # <--- ADDED REQUIRED PARAMETER
             )
         )]
     )
@@ -89,7 +90,8 @@ def setup_search_pipeline():
     embedding_skill = AzureOpenAIEmbeddingSkill(
         name="Embedder",
         resource_url=openai_endpoint,                   
-        deployment_name=openai_embedding_deployment,    
+        deployment_name=openai_embedding_deployment,
+        model_name="text-embedding-3-large",  # <--- ADDED REQUIRED PARAMETER
         dimensions=3072,
         inputs=[{"name": "text", "source": "/document/pages/*"}],
         outputs=[{"name": "embedding", "targetName": "vector"}]
