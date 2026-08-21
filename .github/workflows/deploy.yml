@@ -41,14 +41,14 @@ jobs:
             entraClientId=${{ secrets.AZURE_CLIENT_ID }}
             entraTenantId=${{ secrets.AZURE_TENANT_ID }}
           failOnStdErr: false
-          
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install Python SDKs
-        run: pip install azure-identity azure-search-documents==11.4.0
+        run: pip install azure-identity azure-search-documents
 
       - name: Run AI Search Setup Script
         env:

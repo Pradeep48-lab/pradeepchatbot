@@ -5,22 +5,21 @@ from azure.search.documents.indexes.models import (
     SearchIndex,
     SimpleField,
     SearchableField,
-    InputFieldMappingEntry,
     SearchField,
     SearchFieldDataType,
     VectorSearch,
     HnswAlgorithmConfiguration,
     VectorSearchProfile,
     AzureOpenAIVectorizer,
-    AzureOpenAIParameters,
+    AzureOpenAIVectorizerParameters,
+    SearchIndexerDataIdentity,
     SearchIndexerDataSourceConnection,
     SearchIndexerDataContainer,
     SplitSkill,
     AzureOpenAIEmbeddingSkill,
     SearchIndexerSkillset,
     SearchIndexer,
-    FieldMapping,
-    OutputFieldMappingEntry,
+    InputFieldMappingEntry,
     IndexProjectionMode,
     SearchIndexerIndexProjection,
     SearchIndexerIndexProjectionsParameters,
@@ -28,7 +27,6 @@ from azure.search.documents.indexes.models import (
 )
 
 def setup_search_pipeline():
-    # 1. Load configuration from environment variables
     search_endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
     storage_resource_id = os.environ["AZURE_STORAGE_RESOURCE_ID"]
     openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
@@ -36,11 +34,12 @@ def setup_search_pipeline():
     
     index_name = "documents-index"
     
-    # Use Entra ID (Managed Identity in cloud, Azure CLI locally)
     credential = DefaultAzureCredential()
-    
     index_client = SearchIndexClient(endpoint=search_endpoint, credential=credential)
     indexer_client = SearchIndexerClient(endpoint=search_endpoint, credential=credential)
+
+    # Reusable Managed Identity object for the SDK
+    managed_identity = SearchIndexerDataIdentity(odata_type="#Microsoft.Azure.Search.ManagedServiceIdentity")
 
     print("1. Creating Data Source...")
     ds_conn = SearchIndexerDataSourceConnection(
@@ -52,7 +51,6 @@ def setup_search_pipeline():
     indexer_client.create_or_update_data_source_connection(ds_conn)
 
     print("2. Creating Index...")
-    # text-embedding-3-large uses 3072 dimensions
     fields = [
         SimpleField(name="chunk_id", type=SearchFieldDataType.String, key=True, sortable=True, filterable=True, facetable=True),
         SimpleField(name="parent_id", type=SearchFieldDataType.String, filterable=True),
@@ -71,10 +69,11 @@ def setup_search_pipeline():
         algorithms=[HnswAlgorithmConfiguration(name="my-hnsw")],
         profiles=[VectorSearchProfile(name="my-vector-profile", algorithm_configuration_name="my-hnsw", vectorizer_name="my-openai")],
         vectorizers=[AzureOpenAIVectorizer(
-            name="my-openai", 
-            azure_open_ai_parameters=AzureOpenAIParameters(
-                resource_uri=openai_endpoint, 
-                deployment_id=openai_embedding_deployment
+            vectorizer_name="my-openai",
+            parameters=AzureOpenAIVectorizerParameters(
+                resource_url=openai_endpoint,                   # FIXED: Renamed from resource_uri
+                deployment_name=openai_embedding_deployment,    # FIXED: Renamed from deployment_id
+                auth_identity=managed_identity                  # FIXED: Ensures user queries use Managed Identity
             )
         )]
     )
@@ -94,15 +93,13 @@ def setup_search_pipeline():
     
     embedding_skill = AzureOpenAIEmbeddingSkill(
         name="Embedder",
-        resource_uri=openai_endpoint,
-        deployment_id=openai_embedding_deployment,
+        resource_url=openai_endpoint,                   # FIXED: Renamed from resource_uri
+        deployment_name=openai_embedding_deployment,    # FIXED: Renamed from deployment_id
         dimensions=3072,
         inputs=[{"name": "text", "source": "/document/pages/*"}],
-        outputs=[{"name": "embedding", "targetName": "vector"}]
+        outputs=[{"name": "embedding", "targetName": "vector"}],
+        auth_identity=managed_identity                  # FIXED: Uses correct Managed Identity object
     )
-    
-    # Configure Managed Identity for the skillset to access OpenAI
-    embedding_skill.auth_identity = {"@odata.type": "#Microsoft.Azure.Search.ManagedServiceIdentity"}
 
     skillset = SearchIndexerSkillset(
         name="document-skillset",
@@ -135,7 +132,6 @@ def setup_search_pipeline():
     )
     indexer_client.create_or_update_indexer(indexer)
     
-    # Trigger the indexer to run immediately
     indexer_client.run_indexer("document-indexer")
     print("Setup complete! Indexer is now processing documents.")
 
