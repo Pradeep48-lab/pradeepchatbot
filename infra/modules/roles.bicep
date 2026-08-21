@@ -28,7 +28,7 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' existi
   name: last(split(cosmosAccountId, '/'))
 }
 
-// 2. App Service -> OpenAI User (Scoped strictly to the OpenAI Account)
+// 2. App Service -> OpenAI User (Scoped strictly to the OpenAI Account) for web app to call gpt and text embedding model
 resource appOpenAiRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(appPrincipalId, openAiAccountId, roleCognitiveServicesOpenAIUser)
   scope: openAiAccount
@@ -39,7 +39,7 @@ resource appOpenAiRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-// 3. App Service -> Search Index Reader (Scoped strictly to the Search Account)
+// 3. App Service -> Search Index Reader (Scoped strictly to the Search Account) to run text and vector search queries against the AI Search index.
 resource appSearchRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(appPrincipalId, searchAccountId, roleSearchIndexDataReader)
   scope: searchAccount
@@ -50,7 +50,7 @@ resource appSearchRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-// 4. App Service -> Cosmos DB Data Plane (Scoped strictly to Cosmos DB)
+// 4. App Service -> Cosmos DB Data Plane (Scoped strictly to Cosmos DB) to store chat history
 resource cosmosRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
   parent: cosmosAccount
   name: guid(appPrincipalId, cosmosAccountId, cosmosDataContributorRoleId)
@@ -61,7 +61,7 @@ resource cosmosRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssi
   }
 }
 
-// 5. AI Search -> Storage Reader (Scoped strictly to the Storage Account)
+// 5. AI Search -> Storage Reader (Scoped strictly to the Storage Account) to index files in storage account.
 resource searchStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(searchPrincipalId, storageAccountId, roleStorageBlobDataReader)
   scope: storageAccount
@@ -72,7 +72,7 @@ resource searchStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   }
 }
 
-// 6. AI Search -> OpenAI User (Scoped strictly to the OpenAI Account)
+// 6. AI Search -> OpenAI User (Scoped strictly to the OpenAI Account) for vectorizing the files
 resource searchOpenAiRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(searchPrincipalId, openAiAccountId, roleCognitiveServicesOpenAIUser)
   scope: openAiAccount

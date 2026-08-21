@@ -1,0 +1,143 @@
+import os
+from azure.identity import DefaultAzureCredential
+from azure.search.documents.indexes import SearchIndexClient, SearchIndexerClient
+from azure.search.documents.indexes.models import (
+    SearchIndex,
+    SimpleField,
+    SearchableField,
+    InputFieldMappingEntry,
+    SearchField,
+    SearchFieldDataType,
+    VectorSearch,
+    HnswAlgorithmConfiguration,
+    VectorSearchProfile,
+    AzureOpenAIVectorizer,
+    AzureOpenAIParameters,
+    SearchIndexerDataSourceConnection,
+    SearchIndexerDataContainer,
+    SplitSkill,
+    AzureOpenAIEmbeddingSkill,
+    SearchIndexerSkillset,
+    SearchIndexer,
+    FieldMapping,
+    OutputFieldMappingEntry,
+    IndexProjectionMode,
+    SearchIndexerIndexProjection,
+    SearchIndexerIndexProjectionsParameters,
+    SearchIndexerIndexProjectionSelector
+)
+
+def setup_search_pipeline():
+    # 1. Load configuration from environment variables
+    search_endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
+    storage_resource_id = os.environ["AZURE_STORAGE_RESOURCE_ID"]
+    openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
+    openai_embedding_deployment = os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"]
+    
+    index_name = "documents-index"
+    
+    # Use Entra ID (Managed Identity in cloud, Azure CLI locally)
+    credential = DefaultAzureCredential()
+    
+    index_client = SearchIndexClient(endpoint=search_endpoint, credential=credential)
+    indexer_client = SearchIndexerClient(endpoint=search_endpoint, credential=credential)
+
+    print("1. Creating Data Source...")
+    ds_conn = SearchIndexerDataSourceConnection(
+        name="blob-datasource",
+        type="azureblob",
+        connection_string=f"ResourceId={storage_resource_id};",
+        container=SearchIndexerDataContainer(name="documents")
+    )
+    indexer_client.create_or_update_data_source_connection(ds_conn)
+
+    print("2. Creating Index...")
+    # text-embedding-3-large uses 3072 dimensions
+    fields = [
+        SimpleField(name="chunk_id", type=SearchFieldDataType.String, key=True, sortable=True, filterable=True, facetable=True),
+        SimpleField(name="parent_id", type=SearchFieldDataType.String, filterable=True),
+        SearchableField(name="title", type=SearchFieldDataType.String),
+        SearchableField(name="content", type=SearchFieldDataType.String),
+        SearchField(
+            name="content_vector", 
+            type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
+            searchable=True, 
+            vector_search_dimensions=3072, 
+            vector_search_profile_name="my-vector-profile"
+        )
+    ]
+    
+    vector_search = VectorSearch(
+        algorithms=[HnswAlgorithmConfiguration(name="my-hnsw")],
+        profiles=[VectorSearchProfile(name="my-vector-profile", algorithm_configuration_name="my-hnsw", vectorizer_name="my-openai")],
+        vectorizers=[AzureOpenAIVectorizer(
+            name="my-openai", 
+            azure_open_ai_parameters=AzureOpenAIParameters(
+                resource_uri=openai_endpoint, 
+                deployment_id=openai_embedding_deployment
+            )
+        )]
+    )
+    
+    index = SearchIndex(name=index_name, fields=fields, vector_search=vector_search)
+    index_client.create_or_update_index(index)
+
+    print("3. Creating Skillset (Chunking & Embedding)...")
+    split_skill = SplitSkill(
+        name="Splitter",
+        text_split_mode="pages",
+        maximum_page_length=2000,
+        page_overlapping_length=500,
+        inputs=[{"name": "text", "source": "/document/content"}],
+        outputs=[{"name": "textItems", "targetName": "pages"}]
+    )
+    
+    embedding_skill = AzureOpenAIEmbeddingSkill(
+        name="Embedder",
+        resource_uri=openai_endpoint,
+        deployment_id=openai_embedding_deployment,
+        dimensions=3072,
+        inputs=[{"name": "text", "source": "/document/pages/*"}],
+        outputs=[{"name": "embedding", "targetName": "vector"}]
+    )
+    
+    # Configure Managed Identity for the skillset to access OpenAI
+    embedding_skill.auth_identity = {"@odata.type": "#Microsoft.Azure.Search.ManagedServiceIdentity"}
+
+    skillset = SearchIndexerSkillset(
+        name="document-skillset",
+        description="Split and vectorize",
+        skills=[split_skill, embedding_skill],
+        index_projections=SearchIndexerIndexProjection(
+            selectors=[
+                SearchIndexerIndexProjectionSelector(
+                    target_index_name=index_name,
+                    parent_key_field_name="parent_id",
+                    source_context="/document/pages/*",
+                    mappings=[
+                        InputFieldMappingEntry(name="content", source="/document/pages/*"),
+                        InputFieldMappingEntry(name="content_vector", source="/document/pages/*/vector"),
+                        InputFieldMappingEntry(name="title", source="/document/metadata_storage_name")
+                    ]
+                )
+            ],
+            parameters=SearchIndexerIndexProjectionsParameters(projection_mode=IndexProjectionMode.SKIP_INDEXING_PARENT_DOCUMENTS)
+        )
+    )
+    indexer_client.create_or_update_skillset(skillset)
+
+    print("4. Creating and Running Indexer...")
+    indexer = SearchIndexer(
+        name="document-indexer",
+        data_source_name="blob-datasource",
+        target_index_name=index_name,
+        skillset_name="document-skillset"
+    )
+    indexer_client.create_or_update_indexer(indexer)
+    
+    # Trigger the indexer to run immediately
+    indexer_client.run_indexer("document-indexer")
+    print("Setup complete! Indexer is now processing documents.")
+
+if __name__ == "__main__":
+    setup_search_pipeline()

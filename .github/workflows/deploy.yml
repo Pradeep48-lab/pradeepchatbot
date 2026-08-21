@@ -41,3 +41,19 @@ jobs:
             entraClientId=${{ secrets.AZURE_CLIENT_ID }}
             entraTenantId=${{ secrets.AZURE_TENANT_ID }}
           failOnStdErr: false
+          
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python SDKs
+        run: pip install azure-identity azure-search-documents==11.4.0
+
+      - name: Run AI Search Setup Script
+        env:
+          AZURE_SEARCH_ENDPOINT: "https://${{ vars.SEARCH_SERVICE_NAME }}.search.windows.net"
+          AZURE_STORAGE_RESOURCE_ID: "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ vars.RESOURCE_GROUP_NAME }}/providers/Microsoft.Storage/storageAccounts/${{ vars.STORAGE_ACCOUNT_NAME }}"
+          AZURE_OPENAI_ENDPOINT: "https://${{ vars.OPENAI_ACCOUNT_NAME }}.openai.azure.com/"
+          AZURE_OPENAI_EMBEDDING_DEPLOYMENT: "embedding"
+        run: python src/scripts/setup_search.py
