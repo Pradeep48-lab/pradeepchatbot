@@ -16,11 +16,15 @@ resource chatDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-1
   parent: openAi
   name: 'chat'
   sku: { 
-    name: 'GlobalStandard' // <-- Changed from Standard to GlobalStandard
+    name: 'GlobalStandard' 
     capacity: 20 
   }
   properties: {
-    model: { format: 'OpenAI', name: 'gpt-5.5', version: '2026-04-24' }
+    model: { 
+      format: 'OpenAI'
+      name: 'gpt-4.1' 
+      version: '2025-04-14' 
+    }
   }
 }
 
@@ -28,11 +32,15 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   parent: openAi
   name: 'embedding'
   sku: { 
-    name: 'GlobalStandard' // <-- Changed from Standard to GlobalStandard
+    name: 'GlobalStandard' 
     capacity: 20 
   }
   properties: {
-    model: { format: 'OpenAI', name: 'text-embedding-3-large', version: '1' }
+    model: { 
+      format: 'OpenAI'
+      name: 'text-embedding-3-large' 
+      version: '1' 
+    }
   }
   dependsOn: [ chatDeployment ]
 }
