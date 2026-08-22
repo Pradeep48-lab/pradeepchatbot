@@ -32,4 +32,4 @@ jobs:
         with:
           app-name: ${{ vars.APP_SERVICE_NAME }}
           package: app.zip
-          startup-command: 'gunicorn --bind=0.0.0.0 --timeout 600 -k uvicorn.workers.UvicornWorker main:app'
+          startup-command: 'gunicorn --bind=0.0.0.0:$PORT --timeout 600 -k uvicorn.workers.UvicornWorker main:app'
