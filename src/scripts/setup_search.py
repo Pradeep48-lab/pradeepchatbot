@@ -48,7 +48,7 @@ def setup_search_pipeline():
 
     print("2. Creating Index...")
     fields = [
-        SimpleField(name="chunk_id", type=SearchFieldDataType.String, key=True, sortable=True, filterable=True, facetable=True),
+        SearchableField(name="chunk_id", type=SearchFieldDataType.String, key=True, analyzer_name="keyword", sortable=True, filterable=True, facetable=True),
         SimpleField(name="parent_id", type=SearchFieldDataType.String, filterable=True),
         SearchableField(name="title", type=SearchFieldDataType.String),
         SearchableField(name="content", type=SearchFieldDataType.String),
