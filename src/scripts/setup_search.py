@@ -80,6 +80,7 @@ def setup_search_pipeline():
     print("3. Creating Skillset (Chunking & Embedding)...")
     split_skill = SplitSkill(
         name="Splitter",
+        context="/document",  # <--- ADDED: Explicitly set root context
         text_split_mode="pages",
         maximum_page_length=2000,
         page_overlap_length=500,
@@ -89,6 +90,7 @@ def setup_search_pipeline():
     
     embedding_skill = AzureOpenAIEmbeddingSkill(
         name="Embedder",
+        context="/document/pages/*",  # <--- ADDED: Forces the skill to loop over each chunk
         resource_url=openai_endpoint,                   
         deployment_name=openai_embedding_deployment,
         model_name="text-embedding-3-large",
@@ -101,7 +103,6 @@ def setup_search_pipeline():
         name="document-skillset",
         description="Split and vectorize",
         skills=[split_skill, embedding_skill],
-        # FIXED: This property is singular ('index_projection') in the stable SDK
         index_projection=SearchIndexerIndexProjection(
             selectors=[
                 SearchIndexerIndexProjectionSelector(
