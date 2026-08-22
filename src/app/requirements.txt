@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+gunicorn
+openai
+azure-identity
+azure-search-documents==11.4.0
+azure-cosmos
+pydantic
