@@ -82,7 +82,7 @@ def setup_search_pipeline():
         name="Splitter",
         text_split_mode="pages",
         maximum_page_length=2000,
-        page_overlap_length=500,  # <--- THIS IS THE FIX (Removed 'ing')
+        page_overlap_length=500,
         inputs=[{"name": "text", "source": "/document/content"}],
         outputs=[{"name": "textItems", "targetName": "pages"}]
     )
@@ -101,7 +101,8 @@ def setup_search_pipeline():
         name="document-skillset",
         description="Split and vectorize",
         skills=[split_skill, embedding_skill],
-        index_projections=SearchIndexerIndexProjection(
+        # FIXED: This property is singular ('index_projection') in the stable SDK
+        index_projection=SearchIndexerIndexProjection(
             selectors=[
                 SearchIndexerIndexProjectionSelector(
                     target_index_name=index_name,
@@ -114,7 +115,9 @@ def setup_search_pipeline():
                     ]
                 )
             ],
-            parameters=SearchIndexerIndexProjectionsParameters(projection_mode=IndexProjectionMode.SKIP_INDEXING_PARENT_DOCUMENTS)
+            parameters=SearchIndexerIndexProjectionsParameters(
+                projection_mode=IndexProjectionMode.SKIP_INDEXING_PARENT_DOCUMENTS
+            )
         )
     )
     indexer_client.create_or_update_skillset(skillset)
