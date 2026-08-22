@@ -2,6 +2,8 @@ import os
 import uuid
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.search.documents import SearchClient
@@ -15,7 +17,7 @@ app = FastAPI(title="Azure MS Cloud Chatbot API")
 # 2. Automatically grab the Managed Identity credentials
 credential = DefaultAzureCredential()
 
-# 3. Load Environment Variables (Injected automatically by Azure App Service)
+# 3. Load Environment Variables
 AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_CHAT_DEPLOYMENT = os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT", "chat")
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "embedding")
@@ -52,12 +54,23 @@ try:
 except Exception as e:
     print(f"Error initializing clients: {e}")
 
-# 5. Define the Data Models for the API
+# 5. Serve the Static UI
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/", response_class=FileResponse)
+async def serve_ui():
+    index_path = os.path.join("static", "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return {"status": "healthy", "service": "Azure MS Cloud Chatbot API"}
+
+# 6. Data Models
 class ChatRequest(BaseModel):
     messages: list
     session_id: str = "default_session"
 
-# 6. Create the API Endpoint with the RAG Engine
+# 7. Chat Endpoint (RAG Logic)
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     user_message = request.messages[-1].get("content")
@@ -65,7 +78,7 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Message content is required.")
 
     try:
-        # STEP 1: Generate Vector Embedding for the user's prompt
+        # STEP 1: Generate Vector Embedding
         embedding_response = openai_client.embeddings.create(
             input=user_message,
             model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT
@@ -87,7 +100,7 @@ async def chat_endpoint(request: ChatRequest):
         
         retrieved_context = "\n\n".join([f"Source: {doc['title']}\n{doc['content']}" for doc in search_results])
 
-        # STEP 3: Construct the System Prompt
+        # STEP 3: Construct System Prompt
         system_prompt = f"""You are a helpful Azure customer support assistant. 
         Use ONLY the following context to answer the user's question. 
         If the answer is not in the context, politely say that you don't know and do not guess.
@@ -96,7 +109,7 @@ async def chat_endpoint(request: ChatRequest):
         {retrieved_context}
         """
 
-        # STEP 4: Generate the AI Response
+        # STEP 4: Generate Completion
         chat_messages = [{"role": "system", "content": system_prompt}] + request.messages
         
         chat_response = openai_client.chat.completions.create(
@@ -107,7 +120,7 @@ async def chat_endpoint(request: ChatRequest):
         
         ai_message = chat_response.choices[0].message.content
 
-        # STEP 5: Save the Conversation Turn to Cosmos DB
+        # STEP 5: Persist to Cosmos DB
         chat_record = {
             "id": str(uuid.uuid4()),
             "sessionId": request.session_id,
@@ -128,6 +141,13 @@ async def chat_endpoint(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/")
-async def root():
-    return {"status": "healthy", "service": "Azure MS Cloud Chatbot API"}
+# 8. History Endpoint (Populates Sidebar)
+@app.get("/history")
+async def get_history():
+    try:
+        # Query distinct recent queries from Cosmos DB
+        query = "SELECT TOP 20 c.sessionId, c.user_message, c.timestamp FROM c ORDER BY c._ts DESC"
+        items = list(history_container.query_items(query=query, enable_cross_partition_query=True))
+        return items
+    except Exception:
+        return []

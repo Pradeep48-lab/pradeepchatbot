@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure MS Cloud Chatbot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-[#f8fafc] h-screen flex flex-col font-sans text-slate-800">
+
+    <!-- Top Navigation Bar -->
+    <header class="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between flex-shrink-0">
+        <div class="flex items-center space-x-3">
+            <span class="bg-[#d92938] text-white font-black text-xs px-2.5 py-1 rounded tracking-wider">CDW</span>
+            <h1 class="text-base font-semibold text-slate-800">Azure MS Cloud Chatbot</h1>
+        </div>
+        <div class="flex items-center space-x-3">
+            <button id="toggleHistoryBtn" class="text-xs border border-slate-300 hover:bg-slate-50 px-3 py-1.5 rounded text-slate-600 flex items-center space-x-1.5">
+                <i class="fa-regular fa-window-restore"></i>
+                <span id="toggleText">Hide chat history</span>
+            </button>
+            <button class="text-xs bg-[#0078d4] hover:bg-[#106ebe] text-white px-3 py-1.5 rounded flex items-center space-x-1.5">
+                <i class="fa-solid fa-share-nodes"></i>
+                <span>Share</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <div class="flex flex-1 overflow-hidden">
+        
+        <!-- Center Chat Container -->
+        <main class="flex-1 flex flex-col justify-between items-center relative overflow-hidden">
+            
+            <!-- Messages Stream -->
+            <div id="chatStream" class="w-full max-w-4xl flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                
+                <!-- Initial Hero Welcome (Shown when chat is empty) -->
+                <div id="heroSection" class="flex flex-col items-center justify-center h-full text-center my-auto pt-16">
+                    <span class="bg-[#d92938] text-white font-black text-lg px-3 py-1 rounded mb-4 shadow-sm">CDW</span>
+                    <h2 class="text-2xl font-bold text-slate-900 mb-2">Azure MS Cloud Chatbot. Start chatting.</h2>
+                    <p class="text-sm text-slate-500 max-w-lg leading-relaxed">
+                        Welcome to the Azure MS Cloud Chatbot! Please use it to help resolve customer support issues, find important wiki articles, and improve your workflow.
+                    </p>
+                </div>
+
+            </div>
+
+            <!-- Input Box Section -->
+            <div class="w-full max-w-3xl px-6 pb-6 pt-2">
+                <div class="bg-white border border-slate-300 rounded-xl shadow-sm focus-within:ring-2 focus-within:ring-[#0078d4] focus-within:border-transparent p-3 flex flex-col">
+                    <textarea id="userInput" rows="2" placeholder="Type a new question..." class="w-full resize-none outline-none text-sm text-slate-700 placeholder-slate-400"></textarea>
+                    <div class="flex justify-between items-center pt-2">
+                        <div class="flex space-x-2 text-slate-400 text-xs">
+                            <span class="hover:text-slate-600 cursor-pointer p-1"><i class="fa-solid fa-paperclip"></i></span>
+                            <span class="hover:text-slate-600 cursor-pointer p-1"><i class="fa-regular fa-trash-can" onclick="startNewChat()"></i></span>
+                        </div>
+                        <button id="sendBtn" onclick="sendMessage()" class="text-[#0078d4] hover:text-[#106ebe] disabled:opacity-40 p-1">
+                            <i class="fa-solid fa-paper-plane text-base"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Chat History Sidebar -->
+        <aside id="sidebar" class="w-72 bg-white border-l border-slate-200 flex flex-col flex-shrink-0 transition-all duration-300">
+            <div class="p-4 border-b border-slate-100 flex items-center justify-between">
+                <span class="text-sm font-semibold text-slate-800">Chat history</span>
+                <button onclick="startNewChat()" title="New Chat" class="text-xs text-slate-500 hover:text-slate-800">
+                    <i class="fa-solid fa-plus"></i>
+                </button>
+            </div>
+            
+            <div id="historyList" class="flex-1 overflow-y-auto p-3 space-y-2 text-xs custom-scrollbar">
+                <div class="text-slate-400 px-2 py-1">Loading history...</div>
+            </div>
+        </aside>
+
+    </div>
+
+    <!-- Frontend Script Logic -->
+    <script>
+        let currentSessionId = "session-" + Date.now();
+        let messageHistory = [];
+
+        // Toggle Sidebar
+        const sidebar = document.getElementById('sidebar');
+        const toggleBtn = document.getElementById('toggleHistoryBtn');
+        const toggleText = document.getElementById('toggleText');
+        toggleBtn.addEventListener('click', () => {
+            sidebar.classList.toggle('hidden');
+            toggleText.textContent = sidebar.classList.contains('hidden') ? 'Show chat history' : 'Hide chat history';
+        });
+
+        // Handle Enter key submit
+        document.getElementById('userInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        async function loadHistory() {
+            try {
+                const res = await fetch('/history');
+                if (!res.ok) return;
+                const sessions = await res.json();
+                const container = document.getElementById('historyList');
+                container.innerHTML = '';
+                
+                if (sessions.length === 0) {
+                    container.innerHTML = '<div class="text-slate-400 px-2 py-1">No past sessions</div>';
+                    return;
+                }
+
+                sessions.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = "p-2 rounded hover:bg-slate-100 cursor-pointer truncate text-slate-700";
+                    div.textContent = item.user_message || item.sessionId;
+                    div.onclick = () => resumeSession(item.sessionId);
+                    container.appendChild(div);
+                });
+            } catch (err) {
+                console.error("Failed to load history", err);
+            }
+        }
+
+        function startNewChat() {
+            currentSessionId = "session-" + Date.now();
+            messageHistory = [];
+            const stream = document.getElementById('chatStream');
+            stream.innerHTML = `
+                <div id="heroSection" class="flex flex-col items-center justify-center h-full text-center my-auto pt-16">
+                    <span class="bg-[#d92938] text-white font-black text-lg px-3 py-1 rounded mb-4 shadow-sm">CDW</span>
+                    <h2 class="text-2xl font-bold text-slate-900 mb-2">Azure MS Cloud Chatbot. Start chatting.</h2>
+                    <p class="text-sm text-slate-500 max-w-lg leading-relaxed">
+                        Welcome to the Azure MS Cloud Chatbot! Please use it to help resolve customer support issues, find important wiki articles, and improve your workflow.
+                    </p>
+                </div>
+            `;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            if (!message) return;
+
+            // Remove Hero section if present
+            const hero = document.getElementById('heroSection');
+            if (hero) hero.remove();
+
+            // Append User Message
+            const stream = document.getElementById('chatStream');
+            appendBubble(stream, 'user', message);
+            input.value = '';
+
+            messageHistory.push({ role: "user", content: message });
+
+            // Append Loading Indicator
+            const loadingBubble = appendBubble(stream, 'assistant', '<i class="fa-solid fa-ellipsis fa-fade"></i> Searching knowledge base...');
+            
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: messageHistory,
+                        session_id: currentSessionId
+                    })
+                });
+
+                const data = await response.json();
+                loadingBubble.remove();
+
+                if (response.ok) {
+                    const aiReply = data.message.content;
+                    appendBubble(stream, 'assistant', aiReply, data.context);
+                    messageHistory.push({ role: "assistant", content: aiReply });
+                    loadHistory();
+                } else {
+                    appendBubble(stream, 'assistant', 'Error: ' + (data.detail || 'Could not process query.'));
+                }
+            } catch (err) {
+                loadingBubble.remove();
+                appendBubble(stream, 'assistant', 'Network error connecting to API.');
+            }
+        }
+
+        function appendBubble(container, role, text, context = null) {
+            const wrapper = document.createElement('div');
+            wrapper.className = role === 'user' ? 'flex justify-end' : 'flex justify-start';
+
+            const bubble = document.createElement('div');
+            bubble.className = role === 'user' 
+                ? 'bg-[#e5f1fb] text-[#004578] rounded-2xl rounded-tr-none px-4 py-3 max-w-xl text-sm leading-relaxed border border-[#c7e0f4]' 
+                : 'bg-white text-slate-800 rounded-2xl rounded-tl-none px-4 py-3 max-w-2xl text-sm leading-relaxed border border-slate-200 shadow-sm space-y-2';
+
+            bubble.innerHTML = text;
+
+            if (context && role === 'assistant') {
+                const details = document.createElement('details');
+                details.className = "mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500";
+                details.innerHTML = `<summary class="cursor-pointer font-semibold text-[#0078d4] hover:underline">View Citations / Sources</summary><pre class="mt-1 p-2 bg-slate-50 rounded whitespace-pre-wrap font-mono text-[11px]">${context}</pre>`;
+                bubble.appendChild(details);
+            }
+
+            wrapper.appendChild(bubble);
+            container.appendChild(wrapper);
+            container.scrollTop = container.scrollHeight;
+            return wrapper;
+        }
+
+        loadHistory();
+    </script>
+</body>
+</html>
