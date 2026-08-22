@@ -69,7 +69,7 @@ def setup_search_pipeline():
             parameters=AzureOpenAIVectorizerParameters(
                 resource_url=openai_endpoint,                   
                 deployment_name=openai_embedding_deployment,
-                model_name="text-embedding-3-large"  # <--- ADDED REQUIRED PARAMETER
+                model_name="text-embedding-3-large"
             )
         )]
     )
@@ -82,7 +82,7 @@ def setup_search_pipeline():
         name="Splitter",
         text_split_mode="pages",
         maximum_page_length=2000,
-        page_overlapping_length=500,
+        page_overlap_length=500,  # <--- THIS IS THE FIX (Removed 'ing')
         inputs=[{"name": "text", "source": "/document/content"}],
         outputs=[{"name": "textItems", "targetName": "pages"}]
     )
@@ -91,7 +91,7 @@ def setup_search_pipeline():
         name="Embedder",
         resource_url=openai_endpoint,                   
         deployment_name=openai_embedding_deployment,
-        model_name="text-embedding-3-large",  # <--- ADDED REQUIRED PARAMETER
+        model_name="text-embedding-3-large",
         dimensions=3072,
         inputs=[{"name": "text", "source": "/document/pages/*"}],
         outputs=[{"name": "embedding", "targetName": "vector"}]
