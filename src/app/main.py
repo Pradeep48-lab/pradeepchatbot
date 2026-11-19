@@ -95,11 +95,11 @@ if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-@app.get("/", response_class=FileResponse)
+@app.get("/")
 async def serve_ui():
     index_path = os.path.join("static", "index.html")
     if os.path.exists(index_path):
-        return FileResponse(index_path)
+        return FileResponse(index_path, headers={"Cache-Control": "no-store"})
     return {"status": "healthy", "service": "Azure MS Cloud Chatbot API"}
 
 
@@ -113,6 +113,9 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 async def chat_endpoint(payload: ChatRequest, request: Request):
     user_id, user_name = get_current_user(request)
+    if not payload.messages:
+        raise HTTPException(status_code=400, detail="Messages list cannot be empty.")
+
     user_message = payload.messages[-1].get("content")
     if not user_message:
         raise HTTPException(status_code=400, detail="Message content is required.")
@@ -170,7 +173,8 @@ async def chat_endpoint(payload: ChatRequest, request: Request):
             "userName": user_name,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_message": user_message,
-            "ai_message": ai_message
+            "ai_message": ai_message,
+            "context": retrieved_context
         }
         history_container.create_item(body=chat_record)
 
@@ -220,7 +224,6 @@ async def get_history(request: Request):
                     "_ts": item.get("_ts", 0)
                 }
             else:
-                # Keep the first message as title, update last activity timestamp
                 sessions[sid]["timestamp"] = item.get("timestamp", sessions[sid]["timestamp"])
                 sessions[sid]["_ts"] = max(sessions[sid]["_ts"], item.get("_ts", 0))
 
@@ -255,10 +258,10 @@ async def get_session_history(session_id: str, request: Request):
         items = list(history_container.query_items(
             query=query,
             parameters=parameters,
-            enable_cross_partition_query=True
+            partition_key=session_id
         ))
         items.sort(key=lambda x: x.get("_ts", 0))
         return items
     except Exception as e:
         print(f"Error loading session {session_id}: {e}")
-        return []
+        raise HTTPException(status_code=500, detail=str(e))
