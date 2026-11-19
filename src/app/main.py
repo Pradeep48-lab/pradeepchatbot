@@ -1,7 +1,9 @@
+import base64
+import json
 import os
 import uuid
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -37,26 +39,61 @@ try:
         api_version="2024-02-01",
         azure_ad_token_provider=token_provider
     )
-    
+
     search_client = SearchClient(
         endpoint=AZURE_SEARCH_ENDPOINT,
         index_name=AZURE_SEARCH_INDEX,
         credential=credential
     )
-    
+
     cosmos_client = CosmosClient(
-        url=AZURE_COSMOS_ENDPOINT, 
+        url=AZURE_COSMOS_ENDPOINT,
         credential=credential
     )
     cosmos_db = cosmos_client.get_database_client(AZURE_COSMOS_DB_NAME)
     history_container = cosmos_db.get_container_client(AZURE_COSMOS_CONTAINER_NAME)
-    
+
 except Exception as e:
     print(f"Error initializing clients: {e}")
 
-# 5. Serve the Static UI
+
+# 5. Extract Authenticated User Identity from Azure Easy Auth Headers
+def get_current_user(request: Request) -> tuple[str, str]:
+    user_id = request.headers.get("x-ms-client-principal-id")
+    user_name = request.headers.get("x-ms-client-principal-name", "")
+
+    # Fallback for Linux App Service: decode Base64 X-MS-CLIENT-PRINCIPAL claims
+    if not user_id:
+        principal_header = request.headers.get("x-ms-client-principal")
+        if principal_header:
+            try:
+                decoded = json.loads(base64.b64decode(principal_header).decode("utf-8"))
+                claims = {c.get("typ"): c.get("val") for c in decoded.get("claims", [])}
+                user_id = (
+                    claims.get("http://schemas.microsoft.com/identity/claims/objectidentifier")
+                    or claims.get("oid")
+                    or claims.get("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")
+                    or claims.get("sub")
+                )
+                if not user_name:
+                    user_name = (
+                        claims.get("preferred_username")
+                        or claims.get("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name")
+                        or claims.get("name", "")
+                    )
+            except Exception as e:
+                print(f"Failed to decode X-MS-CLIENT-PRINCIPAL: {e}")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authenticated user identity not found.")
+
+    return user_id, user_name
+
+
+# 6. Serve the Static UI
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 @app.get("/", response_class=FileResponse)
 async def serve_ui():
@@ -65,15 +102,18 @@ async def serve_ui():
         return FileResponse(index_path)
     return {"status": "healthy", "service": "Azure MS Cloud Chatbot API"}
 
-# 6. Data Models
+
+# 7. Data Models
 class ChatRequest(BaseModel):
     messages: list
     session_id: str = "default_session"
 
-# 7. Chat Endpoint (RAG Logic)
+
+# 8. Chat Endpoint (RAG Logic + Per-User Persistence)
 @app.post("/chat")
-async def chat_endpoint(request: ChatRequest):
-    user_message = request.messages[-1].get("content")
+async def chat_endpoint(payload: ChatRequest, request: Request):
+    user_id, user_name = get_current_user(request)
+    user_message = payload.messages[-1].get("content")
     if not user_message:
         raise HTTPException(status_code=400, detail="Message content is required.")
 
@@ -91,14 +131,16 @@ async def chat_endpoint(request: ChatRequest):
             k_nearest_neighbors=3,
             fields="content_vector"
         )
-        
+
         search_results = search_client.search(
             search_text=None,
             vector_queries=[vector_query],
             select=["title", "content"]
         )
-        
-        retrieved_context = "\n\n".join([f"Source: {doc['title']}\n{doc['content']}" for doc in search_results])
+
+        retrieved_context = "\n\n".join(
+            [f"Source: {doc['title']}\n{doc['content']}" for doc in search_results]
+        )
 
         # STEP 3: Construct System Prompt
         system_prompt = f"""You are a helpful Azure customer support assistant. 
@@ -110,20 +152,22 @@ async def chat_endpoint(request: ChatRequest):
         """
 
         # STEP 4: Generate Completion
-        chat_messages = [{"role": "system", "content": system_prompt}] + request.messages
-        
+        chat_messages = [{"role": "system", "content": system_prompt}] + payload.messages
+
         chat_response = openai_client.chat.completions.create(
             model=AZURE_OPENAI_CHAT_DEPLOYMENT,
             messages=chat_messages,
             temperature=0.3
         )
-        
+
         ai_message = chat_response.choices[0].message.content
 
-        # STEP 5: Persist to Cosmos DB
+        # STEP 5: Persist to Cosmos DB tagged with the logged-in user's Entra ID
         chat_record = {
             "id": str(uuid.uuid4()),
-            "sessionId": request.session_id,
+            "sessionId": payload.session_id,
+            "userId": user_id,
+            "userName": user_name,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_message": user_message,
             "ai_message": ai_message
@@ -135,19 +179,86 @@ async def chat_endpoint(request: ChatRequest):
                 "role": "assistant",
                 "content": ai_message
             },
-            "context": retrieved_context 
+            "context": retrieved_context
         }
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 8. History Endpoint (Populates Sidebar)
+
+# 9. History Endpoint (Unique Sessions Grouped per User)
 @app.get("/history")
-async def get_history():
+async def get_history(request: Request):
+    user_id, _ = get_current_user(request)
     try:
-        # Query distinct recent queries from Cosmos DB
-        query = "SELECT TOP 20 c.sessionId, c.user_message, c.timestamp FROM c ORDER BY c._ts DESC"
-        items = list(history_container.query_items(query=query, enable_cross_partition_query=True))
+        query = (
+            "SELECT c.sessionId, c.user_message, c.timestamp, c._ts "
+            "FROM c WHERE c.userId = @user_id"
+        )
+        parameters = [{"name": "@user_id", "value": user_id}]
+        items = list(history_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True
+        ))
+
+        # Process oldest-to-newest so each chat keeps its first question as the title
+        items.sort(key=lambda x: x.get("_ts", 0))
+
+        sessions = {}
+        for item in items:
+            sid = item.get("sessionId")
+            if not sid:
+                continue
+            if sid not in sessions:
+                sessions[sid] = {
+                    "sessionId": sid,
+                    "user_message": item.get("user_message", "New Chat"),
+                    "timestamp": item.get("timestamp", ""),
+                    "_ts": item.get("_ts", 0)
+                }
+            else:
+                # Keep the first message as title, update last activity timestamp
+                sessions[sid]["timestamp"] = item.get("timestamp", sessions[sid]["timestamp"])
+                sessions[sid]["_ts"] = max(sessions[sid]["_ts"], item.get("_ts", 0))
+
+        # Return the 20 most recently active unique chats
+        sorted_sessions = sorted(sessions.values(), key=lambda x: x["_ts"], reverse=True)[:20]
+        return [
+            {
+                "sessionId": s["sessionId"],
+                "user_message": s["user_message"],
+                "timestamp": s["timestamp"]
+            }
+            for s in sorted_sessions
+        ]
+    except Exception as e:
+        print(f"Error loading history: {e}")
+        return []
+
+
+# 10. Load Specific Session Endpoint (Restricted to the Logged-In User)
+@app.get("/history/{session_id}")
+async def get_session_history(session_id: str, request: Request):
+    user_id, _ = get_current_user(request)
+    try:
+        query = (
+            "SELECT * FROM c "
+            "WHERE c.sessionId = @session_id AND c.userId = @user_id"
+        )
+        parameters = [
+            {"name": "@session_id", "value": session_id},
+            {"name": "@user_id", "value": user_id}
+        ]
+        items = list(history_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True
+        ))
+        items.sort(key=lambda x: x.get("_ts", 0))
         return items
-    except Exception:
+    except Exception as e:
+        print(f"Error loading session {session_id}: {e}")
         return []
