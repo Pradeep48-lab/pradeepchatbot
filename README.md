@@ -22,7 +22,7 @@ A Zero Trust, keyless Retrieval-Augmented Generation (RAG) chatbot hosted on Mic
 
 ## Repository Structure
 
-
+```text
 .
 ├── .github/workflows/
 │   ├── deploy.yml              # Workflow 1: Bicep infrastructure + AI Search pipeline
@@ -46,7 +46,7 @@ A Zero Trust, keyless Retrieval-Augmented Generation (RAG) chatbot hosted on Mic
 │   └── scripts/
 │       └── setup_search.py     # Integrated Vectorization & daily 12:00 AM IST indexer setup
 └── README.md
-
+```
 
 ## Prerequisites (Manual Setup)
 
