@@ -33,14 +33,14 @@
 
     <!-- Main Workspace -->
     <div class="flex flex-1 overflow-hidden">
-        
+
         <!-- Center Chat Container -->
         <main class="flex-1 flex flex-col justify-between items-center relative overflow-hidden">
-            
+
             <!-- Messages Stream -->
             <div id="chatStream" class="w-full max-w-4xl flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-                
-                <!-- Initial Hero Welcome (Shown when chat is empty) -->
+
+                <!-- Initial Hero Welcome -->
                 <div id="heroSection" class="flex flex-col items-center justify-center h-full text-center my-auto pt-16">
                     <img src="/static/logo.png" alt="Company Logo" class="h-12 object-contain mb-4">
                     <h2 class="text-2xl font-bold text-slate-900 mb-2">Azure MS Cloud Chatbot. Start chatting.</h2>
@@ -58,7 +58,7 @@
                     <div class="flex justify-between items-center pt-2">
                         <div class="flex space-x-2 text-slate-400 text-xs">
                             <span class="hover:text-slate-600 cursor-pointer p-1"><i class="fa-solid fa-paperclip"></i></span>
-                            <span class="hover:text-slate-600 cursor-pointer p-1"><i class="fa-regular fa-trash-can" onclick="startNewChat()"></i></span>
+                            <span class="hover:text-slate-600 cursor-pointer p-1" title="Clear / New Chat" onclick="startNewChat()"><i class="fa-regular fa-trash-can"></i></span>
                         </div>
                         <button id="sendBtn" onclick="sendMessage()" class="text-[#0078d4] hover:text-[#106ebe] disabled:opacity-40 p-1">
                             <i class="fa-solid fa-paper-plane text-base"></i>
@@ -72,12 +72,12 @@
         <aside id="sidebar" class="w-72 bg-white border-l border-slate-200 flex flex-col flex-shrink-0 transition-all duration-300">
             <div class="p-4 border-b border-slate-100 flex items-center justify-between">
                 <span class="text-sm font-semibold text-slate-800">Chat history</span>
-                <button onclick="startNewChat()" title="New Chat" class="text-xs text-slate-500 hover:text-slate-800">
+                <button onclick="startNewChat()" title="New Chat" class="text-xs text-slate-500 hover:text-slate-800 p-1">
                     <i class="fa-solid fa-plus"></i>
                 </button>
             </div>
-            
-            <div id="historyList" class="flex-1 overflow-y-auto p-3 space-y-2 text-xs custom-scrollbar">
+
+            <div id="historyList" class="flex-1 overflow-y-auto p-3 space-y-1 text-xs custom-scrollbar">
                 <div class="text-slate-400 px-2 py-1">Loading history...</div>
             </div>
         </aside>
@@ -106,28 +106,95 @@
             }
         });
 
+        function highlightActiveSession() {
+            const buttons = document.querySelectorAll('#historyList button[data-session-id]');
+            buttons.forEach(btn => {
+                const isActive = btn.dataset.sessionId === currentSessionId;
+                btn.className = isActive
+                    ? "w-full text-left p-2 rounded bg-[#e5f1fb] text-[#004578] font-medium truncate cursor-pointer"
+                    : "w-full text-left p-2 rounded hover:bg-slate-100 text-slate-700 truncate cursor-pointer";
+            });
+        }
+
         async function loadHistory() {
             try {
-                const res = await fetch('/history');
-                if (!res.ok) return;
+                const res = await fetch('/history', { cache: 'no-store' });
+                if (!res.ok) {
+                    console.error("Failed to load history:", res.status);
+                    return;
+                }
                 const sessions = await res.json();
                 const container = document.getElementById('historyList');
                 container.innerHTML = '';
-                
-                if (sessions.length === 0) {
+
+                if (!Array.isArray(sessions) || sessions.length === 0) {
                     container.innerHTML = '<div class="text-slate-400 px-2 py-1">No past sessions</div>';
                     return;
                 }
 
                 sessions.forEach(item => {
-                    const div = document.createElement('div');
-                    div.className = "p-2 rounded hover:bg-slate-100 cursor-pointer truncate text-slate-700";
-                    div.textContent = item.user_message || item.sessionId;
-                    div.onclick = () => resumeSession(item.sessionId);
-                    container.appendChild(div);
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.dataset.sessionId = item.sessionId;
+                    btn.textContent = item.user_message || item.sessionId;
+                    btn.title = item.user_message || item.sessionId;
+                    btn.addEventListener('click', () => resumeSession(item.sessionId));
+                    container.appendChild(btn);
                 });
+
+                highlightActiveSession();
             } catch (err) {
-                console.error("Failed to load history", err);
+                console.error("Failed to load history:", err);
+            }
+        }
+
+        async function resumeSession(sessionId) {
+            const stream = document.getElementById('chatStream');
+            try {
+                currentSessionId = sessionId;
+                highlightActiveSession();
+
+                stream.innerHTML = '';
+                const loadingBubble = appendBubble(
+                    stream,
+                    'assistant',
+                    '<i class="fa-solid fa-ellipsis fa-fade"></i> Loading conversation...',
+                    null,
+                    true
+                );
+
+                const res = await fetch(`/history/${encodeURIComponent(sessionId)}`, { cache: 'no-store' });
+                loadingBubble.remove();
+
+                if (!res.ok) {
+                    appendBubble(stream, 'assistant', `Could not load this chat (HTTP ${res.status}).`);
+                    return;
+                }
+
+                const pastInteractions = await res.json();
+                messageHistory = [];
+
+                if (!Array.isArray(pastInteractions) || pastInteractions.length === 0) {
+                    appendBubble(stream, 'assistant', 'No messages were found for this session.');
+                    return;
+                }
+
+                pastInteractions.forEach(turn => {
+                    messageHistory.push({ role: "user", content: turn.user_message });
+                    messageHistory.push({ role: "assistant", content: turn.ai_message });
+
+                    appendBubble(stream, 'user', turn.user_message);
+                    appendBubble(stream, 'assistant', turn.ai_message, turn.context || null);
+                });
+
+                if (window.innerWidth < 768) {
+                    sidebar.classList.add('hidden');
+                    toggleText.textContent = 'Show chat history';
+                }
+            } catch (err) {
+                console.error("Failed to resume session:", err);
+                stream.innerHTML = '';
+                appendBubble(stream, 'assistant', 'Network error while loading this chat.');
             }
         }
 
@@ -144,6 +211,7 @@
                     </p>
                 </div>
             `;
+            highlightActiveSession();
         }
 
         async function sendMessage() {
@@ -151,20 +219,23 @@
             const message = input.value.trim();
             if (!message) return;
 
-            // Remove Hero section if present
             const hero = document.getElementById('heroSection');
             if (hero) hero.remove();
 
-            // Append User Message
             const stream = document.getElementById('chatStream');
             appendBubble(stream, 'user', message);
             input.value = '';
 
             messageHistory.push({ role: "user", content: message });
 
-            // Append Loading Indicator
-            const loadingBubble = appendBubble(stream, 'assistant', '<i class="fa-solid fa-ellipsis fa-fade"></i> Searching knowledge base...');
-            
+            const loadingBubble = appendBubble(
+                stream,
+                'assistant',
+                '<i class="fa-solid fa-ellipsis fa-fade"></i> Searching knowledge base...',
+                null,
+                true
+            );
+
             try {
                 const response = await fetch('/chat', {
                     method: 'POST',
@@ -180,7 +251,7 @@
 
                 if (response.ok) {
                     const aiReply = data.message.content;
-                    appendBubble(stream, 'assistant', aiReply, data.context);
+                    appendBubble(stream, 'assistant', aiReply, data.context || null);
                     messageHistory.push({ role: "assistant", content: aiReply });
                     loadHistory();
                 } else {
@@ -192,21 +263,38 @@
             }
         }
 
-        function appendBubble(container, role, text, context = null) {
+        function appendBubble(container, role, text, context = null, isHtml = false) {
             const wrapper = document.createElement('div');
             wrapper.className = role === 'user' ? 'flex justify-end' : 'flex justify-start';
 
             const bubble = document.createElement('div');
-            bubble.className = role === 'user' 
-                ? 'bg-[#e5f1fb] text-[#004578] rounded-2xl rounded-tr-none px-4 py-3 max-w-xl text-sm leading-relaxed border border-[#c7e0f4]' 
+            bubble.className = role === 'user'
+                ? 'bg-[#e5f1fb] text-[#004578] rounded-2xl rounded-tr-none px-4 py-3 max-w-xl text-sm leading-relaxed border border-[#c7e0f4]'
                 : 'bg-white text-slate-800 rounded-2xl rounded-tl-none px-4 py-3 max-w-2xl text-sm leading-relaxed border border-slate-200 shadow-sm space-y-2';
 
-            bubble.innerHTML = text;
+            const contentEl = document.createElement('div');
+            contentEl.className = 'whitespace-pre-wrap';
+            if (isHtml) {
+                contentEl.innerHTML = text;
+            } else {
+                contentEl.textContent = text;
+            }
+            bubble.appendChild(contentEl);
 
             if (context && role === 'assistant') {
                 const details = document.createElement('details');
                 details.className = "mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500";
-                details.innerHTML = `<summary class="cursor-pointer font-semibold text-[#0078d4] hover:underline">View Citations / Sources</summary><pre class="mt-1 p-2 bg-slate-50 rounded whitespace-pre-wrap font-mono text-[11px]">${context}</pre>`;
+
+                const summary = document.createElement('summary');
+                summary.className = "cursor-pointer font-semibold text-[#0078d4] hover:underline";
+                summary.textContent = "View Citations / Sources";
+
+                const pre = document.createElement('pre');
+                pre.className = "mt-1 p-2 bg-slate-50 rounded whitespace-pre-wrap font-mono text-[11px]";
+                pre.textContent = context;
+
+                details.appendChild(summary);
+                details.appendChild(pre);
                 bubble.appendChild(details);
             }
 
