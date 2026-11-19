@@ -18,8 +18,12 @@ param location string = resourceGroup().location
 param appServicePlanName string
 param appServiceName string
 param openAiEndpoint string
+param chatDeployment string = 'chat'
+param embeddingDeployment string = 'embedding'
 param searchEndpoint string
 param cosmosEndpoint string
+param cosmosDbName string = 'chatdb'
+param cosmosContainer string = 'history'
 param entraClientId string
 param entraTenantId string
 
@@ -62,11 +66,11 @@ resource appServiceApp 'Microsoft.Web/sites@2022-09-01' = {
         }
         {
           name: 'AZURE_OPENAI_CHAT_DEPLOYMENT'
-          value: 'chat'
+          value: chatDeployment
         }
         {
           name: 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT'
-          value: 'embedding'
+          value: embeddingDeployment
         }
         {
           name: 'AZURE_SEARCH_ENDPOINT'
@@ -82,11 +86,11 @@ resource appServiceApp 'Microsoft.Web/sites@2022-09-01' = {
         }
         {
           name: 'AZURE_COSMOS_DB_NAME'
-          value: 'chatdb'
+          value: cosmosDbName
         }
         {
           name: 'AZURE_COSMOS_CONTAINER_NAME'
-          value: 'history'
+          value: cosmosContainer
         }
       ]
     }
@@ -110,7 +114,7 @@ resource authSettings 'Microsoft.Web/sites/config@2022-09-01' = {
         enabled: true
         registration: {
           clientId: entraClientId
-          openIdIssuer: 'https://login.microsoftonline.com/${entraTenantId}/v2.0'
+          openIdIssuer: uri(environment().authentication.loginEndpoint, '${entraTenantId}/v2.0')
         }
       }
     }
