@@ -58,7 +58,7 @@
                     <div class="flex justify-between items-center pt-2">
                         <div class="flex space-x-2 text-slate-400 text-xs">
                             <span class="hover:text-slate-600 cursor-pointer p-1"><i class="fa-solid fa-paperclip"></i></span>
-                            <span class="hover:text-slate-600 cursor-pointer p-1" title="Clear / New Chat" onclick="startNewChat()"><i class="fa-regular fa-trash-can"></i></span>
+                            <span class="hover:text-slate-600 cursor-pointer p-1" title="New chat" onclick="startNewChat()"><i class="fa-regular fa-pen-to-square"></i></span>
                         </div>
                         <button id="sendBtn" onclick="sendMessage()" class="text-[#0078d4] hover:text-[#106ebe] disabled:opacity-40 p-1">
                             <i class="fa-solid fa-paper-plane text-base"></i>
@@ -88,6 +88,21 @@
     <script>
         let currentSessionId = "session-" + Date.now();
         let messageHistory = [];
+        let isSending = false;
+
+        // Lock the input while the bot is answering, so a second question
+        // can't be sent before the first reply arrives.
+        function setSending(sending) {
+            isSending = sending;
+            const input = document.getElementById('userInput');
+            const sendBtn = document.getElementById('sendBtn');
+            input.disabled = sending;
+            sendBtn.disabled = sending;
+            input.placeholder = sending ? 'Waiting for the answer...' : 'Type a new question...';
+            input.classList.toggle('bg-white', !sending);
+            input.classList.toggle('cursor-not-allowed', sending);
+            if (!sending) input.focus();
+        }
 
         // Toggle Sidebar
         const sidebar = document.getElementById('sidebar');
@@ -102,7 +117,7 @@
         document.getElementById('userInput').addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                sendMessage();
+                if (!isSending) sendMessage();
             }
         });
 
@@ -111,9 +126,27 @@
             buttons.forEach(btn => {
                 const isActive = btn.dataset.sessionId === currentSessionId;
                 btn.className = isActive
-                    ? "w-full text-left p-2 rounded bg-[#e5f1fb] text-[#004578] font-medium truncate cursor-pointer"
-                    : "w-full text-left p-2 rounded hover:bg-slate-100 text-slate-700 truncate cursor-pointer";
+                    ? "flex-1 min-w-0 text-left p-2 pr-8 rounded bg-[#e5f1fb] text-[#004578] font-medium truncate cursor-pointer"
+                    : "flex-1 min-w-0 text-left p-2 pr-8 rounded hover:bg-slate-100 text-slate-700 truncate cursor-pointer";
             });
+        }
+
+        async function deleteSession(sessionId, title) {
+            const label = title && title.length > 60 ? title.slice(0, 60) + '…' : (title || 'this chat');
+            if (!confirm(`Delete "${label}"?\n\nThis permanently removes the chat from your history.`)) return;
+
+            try {
+                const res = await fetch(`/history/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+                if (!res.ok && res.status !== 404) {
+                    alert(`Could not delete this chat (HTTP ${res.status}).`);
+                    return;
+                }
+                if (sessionId === currentSessionId) startNewChat();
+                loadHistory();
+            } catch (err) {
+                console.error("Failed to delete session:", err);
+                alert('Network error while deleting this chat.');
+            }
         }
 
         async function loadHistory() {
@@ -133,13 +166,32 @@
                 }
 
                 sessions.forEach(item => {
+                    const title = item.user_message || item.sessionId;
+
+                    const row = document.createElement('div');
+                    row.className = 'group relative flex items-center';
+
                     const btn = document.createElement('button');
                     btn.type = 'button';
                     btn.dataset.sessionId = item.sessionId;
-                    btn.textContent = item.user_message || item.sessionId;
-                    btn.title = item.user_message || item.sessionId;
+                    btn.textContent = title;
+                    btn.title = title;
                     btn.addEventListener('click', () => resumeSession(item.sessionId));
-                    container.appendChild(btn);
+
+                    const del = document.createElement('button');
+                    del.type = 'button';
+                    del.title = 'Delete chat';
+                    del.setAttribute('aria-label', 'Delete chat: ' + title);
+                    del.className = 'absolute right-1 p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 md:opacity-0 group-hover:opacity-100 focus:opacity-100';
+                    del.innerHTML = '<i class="fa-regular fa-trash-can"></i>';
+                    del.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        deleteSession(item.sessionId, title);
+                    });
+
+                    row.appendChild(btn);
+                    row.appendChild(del);
+                    container.appendChild(row);
                 });
 
                 highlightActiveSession();
@@ -184,7 +236,8 @@
                     messageHistory.push({ role: "assistant", content: turn.ai_message });
 
                     appendBubble(stream, 'user', turn.user_message);
-                    appendBubble(stream, 'assistant', turn.ai_message, turn.context || null);
+                    appendBubble(stream, 'assistant', turn.ai_message, turn.context || null, false,
+                        { question: turn.user_message, learnLinks: turn.learn_links || [] });
                 });
 
                 if (window.innerWidth < 768) {
@@ -217,7 +270,9 @@
         async function sendMessage() {
             const input = document.getElementById('userInput');
             const message = input.value.trim();
-            if (!message) return;
+            if (!message || isSending) return;
+            setSending(true);
+            const requestSessionId = currentSessionId;
 
             const hero = document.getElementById('heroSection');
             if (hero) hero.remove();
@@ -231,7 +286,7 @@
             const loadingBubble = appendBubble(
                 stream,
                 'assistant',
-                '<i class="fa-solid fa-ellipsis fa-fade"></i> Searching knowledge base...',
+                '<i class="fa-solid fa-ellipsis fa-fade"></i> Searching knowledge base and Microsoft Learn...',
                 null,
                 true
             );
@@ -249,21 +304,79 @@
                 const data = await response.json();
                 loadingBubble.remove();
 
+                // The user switched chats while waiting: the answer is saved, just don't show it here.
+                if (currentSessionId !== requestSessionId) {
+                    loadHistory();
+                    return;
+                }
+
                 if (response.ok) {
                     const aiReply = data.message.content;
-                    appendBubble(stream, 'assistant', aiReply, data.context || null);
+                    appendBubble(stream, 'assistant', aiReply, data.context || null, false,
+                        { question: message, learnLinks: data.learn_links || [] });
                     messageHistory.push({ role: "assistant", content: aiReply });
                     loadHistory();
                 } else {
+                    messageHistory.pop();
                     appendBubble(stream, 'assistant', 'Error: ' + (data.detail || 'Could not process query.'));
                 }
             } catch (err) {
                 loadingBubble.remove();
-                appendBubble(stream, 'assistant', 'Network error connecting to API.');
+                if (currentSessionId === requestSessionId) {
+                    messageHistory.pop();
+                    appendBubble(stream, 'assistant', 'Network error connecting to API.');
+                }
+            } finally {
+                setSending(false);
             }
         }
 
-        function appendBubble(container, role, text, context = null, isHtml = false) {
+        // Microsoft Learn search page for a question (opens in a new tab)
+        function learnSearchUrl(question) {
+            const terms = (question || '').trim().slice(0, 200);
+            return 'https://learn.microsoft.com/en-us/search/?terms=' + encodeURIComponent(terms);
+        }
+
+        // "Search Microsoft Learn" button + related Learn articles, shown under each answer
+        function buildLearnPanel(question, learnLinks) {
+            const panel = document.createElement('div');
+            panel.className = 'mt-2 pt-2 border-t border-slate-100 flex flex-col gap-2';
+
+            const links = (learnLinks || []).filter(l => l && typeof l.url === 'string' && l.url.startsWith('https://learn.microsoft.com/'));
+            if (links.length) {
+                const label = document.createElement('div');
+                label.className = 'text-[11px] font-semibold uppercase tracking-wide text-slate-500';
+                label.textContent = 'Related on Microsoft Learn';
+                panel.appendChild(label);
+
+                const list = document.createElement('div');
+                list.className = 'flex flex-col gap-1';
+                links.forEach(l => {
+                    const a = document.createElement('a');
+                    a.href = l.url;
+                    a.target = '_blank';
+                    a.rel = 'noopener noreferrer';
+                    a.className = 'text-xs text-[#0078d4] hover:underline truncate';
+                    a.title = l.url;
+                    a.innerHTML = '<i class="fa-solid fa-arrow-up-right-from-square text-[10px] mr-1"></i>';
+                    a.appendChild(document.createTextNode(l.title || l.url));
+                    list.appendChild(a);
+                });
+                panel.appendChild(list);
+            }
+
+            const btn = document.createElement('a');
+            btn.href = learnSearchUrl(question);
+            btn.target = '_blank';
+            btn.rel = 'noopener noreferrer';
+            btn.className = 'self-start inline-flex items-center gap-1.5 text-xs border border-[#0078d4] text-[#0078d4] hover:bg-[#e5f1fb] rounded-full px-3 py-1';
+            btn.innerHTML = '<i class="fa-brands fa-microsoft"></i><span>Search Microsoft Learn for this topic</span>';
+            panel.appendChild(btn);
+
+            return panel;
+        }
+
+        function appendBubble(container, role, text, context = null, isHtml = false, learn = null) {
             const wrapper = document.createElement('div');
             wrapper.className = role === 'user' ? 'flex justify-end' : 'flex justify-start';
 
@@ -296,6 +409,10 @@
                 details.appendChild(summary);
                 details.appendChild(pre);
                 bubble.appendChild(details);
+            }
+
+            if (learn && role === 'assistant' && learn.question) {
+                bubble.appendChild(buildLearnPanel(learn.question, learn.learnLinks));
             }
 
             wrapper.appendChild(bubble);

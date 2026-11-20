@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import os
@@ -12,6 +13,8 @@ from azure.search.documents import SearchClient
 from azure.search.documents.models import VectorizedQuery
 from azure.cosmos import CosmosClient
 from openai import AzureOpenAI
+
+from learn_search import search_learn
 
 # 1. Initialize the FastAPI App
 app = FastAPI(title="Azure MS Cloud Chatbot API")
@@ -30,6 +33,9 @@ AZURE_SEARCH_INDEX = os.environ.get("AZURE_SEARCH_INDEX", "documents-index")
 AZURE_COSMOS_ENDPOINT = os.environ.get("AZURE_COSMOS_ENDPOINT")
 AZURE_COSMOS_DB_NAME = os.environ.get("AZURE_COSMOS_DB_NAME", "chatdb")
 AZURE_COSMOS_CONTAINER_NAME = os.environ.get("AZURE_COSMOS_CONTAINER_NAME", "history")
+
+# Microsoft Learn search (public Learn MCP server). Set to "false" to turn off.
+ENABLE_LEARN_SEARCH = os.environ.get("ENABLE_LEARN_SEARCH", "true").lower() == "true"
 
 # 4. Initialize Azure Clients
 try:
@@ -103,6 +109,25 @@ async def serve_ui():
     return {"status": "healthy", "service": "Azure MS Cloud Chatbot API"}
 
 
+# Internal knowledge base search (runs in a worker thread; the SDK calls are blocking)
+def search_internal_kb(question: str) -> list[dict]:
+    embedding_response = openai_client.embeddings.create(
+        input=question,
+        model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+    )
+    vector_query = VectorizedQuery(
+        vector=embedding_response.data[0].embedding,
+        k_nearest_neighbors=3,
+        fields="content_vector"
+    )
+    results = search_client.search(
+        search_text=None,
+        vector_queries=[vector_query],
+        select=["title", "content"]
+    )
+    return [{"title": doc["title"], "content": doc["content"]} for doc in results]
+
+
 # 7. Data Models
 class ChatRequest(BaseModel):
     messages: list
@@ -121,37 +146,49 @@ async def chat_endpoint(payload: ChatRequest, request: Request):
         raise HTTPException(status_code=400, detail="Message content is required.")
 
     try:
-        # STEP 1: Generate Vector Embedding
-        embedding_response = openai_client.embeddings.create(
-            input=user_message,
-            model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+        # STEPS 1-2: Search the internal knowledge base and Microsoft Learn in parallel
+        learn_task = (
+            search_learn(user_message) if ENABLE_LEARN_SEARCH else asyncio.sleep(0, result=[])
         )
-        query_vector = embedding_response.data[0].embedding
-
-        # STEP 2: Search the Knowledge Base
-        vector_query = VectorizedQuery(
-            vector=query_vector,
-            k_nearest_neighbors=3,
-            fields="content_vector"
+        internal_docs, learn_docs = await asyncio.gather(
+            asyncio.to_thread(search_internal_kb, user_message),
+            learn_task,
         )
 
-        search_results = search_client.search(
-            search_text=None,
-            vector_queries=[vector_query],
-            select=["title", "content"]
+        internal_context = "\n\n".join(
+            f"Source: {doc['title']}\n{doc['content']}" for doc in internal_docs
+        )
+        learn_context = "\n\n".join(
+            f"Source: {doc['title']} ({doc['url']})\n{doc['content']}" for doc in learn_docs
         )
 
-        retrieved_context = "\n\n".join(
-            [f"Source: {doc['title']}\n{doc['content']}" for doc in search_results]
-        )
+        # Clickable Learn articles shown under the answer
+        learn_links = [
+            {"title": doc["title"], "url": doc["url"]}
+            for doc in learn_docs
+            if doc.get("url", "").startswith("https://learn.microsoft.com/")
+        ]
+
+        context_sections = []
+        if internal_context:
+            context_sections.append(f"=== INTERNAL KNOWLEDGE BASE ===\n{internal_context}")
+        if learn_context:
+            context_sections.append(f"=== MICROSOFT LEARN ===\n{learn_context}")
+        retrieved_context = "\n\n".join(context_sections)
 
         # STEP 3: Construct System Prompt
-        system_prompt = f"""You are a helpful Azure customer support assistant. 
-        Use ONLY the following context to answer the user's question. 
+        system_prompt = f"""You are a helpful Azure customer support assistant.
+        Use ONLY the following context to answer the user's question.
+        The context has two kinds of sources:
+        - INTERNAL KNOWLEDGE BASE: our own documents. Prefer these for company-specific
+          processes, past tickets and internal guidance.
+        - MICROSOFT LEARN: official Microsoft documentation. Use these for product behaviour,
+          limits and how-to steps, and include the article URL when you use one.
+        If the sources disagree, say so and explain both.
         If the answer is not in the context, politely say that you don't know and do not guess.
-        
+
         Context:
-        {retrieved_context}
+        {retrieved_context or "(no matching sources found)"}
         """
 
         # STEP 4: Generate Completion
@@ -174,7 +211,8 @@ async def chat_endpoint(payload: ChatRequest, request: Request):
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_message": user_message,
             "ai_message": ai_message,
-            "context": retrieved_context
+            "context": retrieved_context,
+            "learn_links": learn_links
         }
         history_container.create_item(body=chat_record)
 
@@ -183,7 +221,8 @@ async def chat_endpoint(payload: ChatRequest, request: Request):
                 "role": "assistant",
                 "content": ai_message
             },
-            "context": retrieved_context
+            "context": retrieved_context,
+            "learn_links": learn_links
         }
 
     except HTTPException:
@@ -264,4 +303,31 @@ async def get_session_history(session_id: str, request: Request):
         return items
     except Exception as e:
         print(f"Error loading session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# 11. Delete a Chat Thread (only the logged-in user's own messages in that session)
+@app.delete("/history/{session_id}")
+async def delete_session_history(session_id: str, request: Request):
+    user_id, _ = get_current_user(request)
+    try:
+        items = list(history_container.query_items(
+            query="SELECT c.id FROM c WHERE c.sessionId = @session_id AND c.userId = @user_id",
+            parameters=[
+                {"name": "@session_id", "value": session_id},
+                {"name": "@user_id", "value": user_id}
+            ],
+            partition_key=session_id
+        ))
+        if not items:
+            raise HTTPException(status_code=404, detail="Chat not found.")
+
+        for item in items:
+            history_container.delete_item(item=item["id"], partition_key=session_id)
+
+        return {"deleted": len(items), "sessionId": session_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting session {session_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

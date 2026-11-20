@@ -91,6 +91,15 @@ A Zero Trust, keyless Retrieval-Augmented Generation (RAG) chatbot hosted on Mic
    - In the Azure Portal, open **Azure AI Search → Indexers → `document-indexer`** and click **Run** once manually to index the initial files immediately. Future uploads are indexed automatically every day at **12:00 AM IST**.
 4. **Verify Live App:** Open `https://<APP_SERVICE_NAME>.azurewebsites.net/`, sign in via Entra ID SSO, confirm your logo and citations render, test switching chats in the sidebar, and verify per-user history isolation with a second Entra ID account.
 
+## Chat Features
+
+- **Microsoft Learn grounding:** Every question searches the internal knowledge base and Microsoft Learn in parallel. Learn results come from Microsoft's free, keyless Learn MCP server (`https://learn.microsoft.com/api/mcp`, tool `microsoft_docs_search`) via `src/app/learn_search.py`. The answer prefers internal sources for company-specific guidance and cites Learn article URLs. If Learn is unreachable, the bot answers from the internal knowledge base only.
+  - App settings (optional): `ENABLE_LEARN_SEARCH` (`true`/`false`, default `true`), `LEARN_MAX_RESULTS` (default `3`), `LEARN_TIMEOUT_SECONDS` (default `10`).
+  - The App Service needs outbound HTTPS to `learn.microsoft.com` (allowed by default; add it to any firewall/NAT allow list if you restrict egress).
+- **"Search Microsoft Learn" under every answer:** Each answer shows the related Microsoft Learn articles that were found (clickable, opening in a new tab) and a **Search Microsoft Learn for this topic** button that opens `learn.microsoft.com/en-us/search/?terms=<the user's question>`. The button works even when `ENABLE_LEARN_SEARCH=false`, so you can keep answers grounded only in your own instructions while still offering Learn as an option.
+- **Delete chats:** Hover a chat in the history sidebar and click the trash icon. `DELETE /history/{session_id}` removes only the signed-in user's messages in that session.
+- **One question at a time:** The input box and send button are locked until the current answer arrives.
+
 ## Operational Guardrails
 
 - **Build Settings:** Keep `SCM_DO_BUILD_DURING_DEPLOYMENT=true` in `infra/modules/appservice.bicep` and never set `WEBSITE_RUN_FROM_PACKAGE=1` (it blocks Oryx from building `antenv` and causes HTTP 503 crashes).
