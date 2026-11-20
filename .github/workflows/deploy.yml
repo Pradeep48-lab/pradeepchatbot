@@ -1,4 +1,4 @@
-name: Deploy Azure RAG Infrastructure
+name: 01. Infrastructure Setup & Pipeline Provisioning
 
 on:
   workflow_dispatch:
@@ -24,23 +24,20 @@ jobs:
       - name: Deploy Bicep Infrastructure
         uses: azure/arm-deploy@v2
         with:
-          scope: resourcegroup
-          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           resourceGroupName: ${{ vars.RESOURCE_GROUP_NAME }}
           template: ./infra/main.bicep
           parameters: >
             location=${{ vars.AZURE_LOCATION }}
             storageAccountName=${{ vars.STORAGE_ACCOUNT_NAME }}
             storageContainerName=${{ vars.STORAGE_CONTAINER_NAME }}
-            openAiName=${{ vars.OPENAI_ACCOUNT_NAME }}
+            openAiAccountName=${{ vars.OPENAI_ACCOUNT_NAME }}
             searchServiceName=${{ vars.SEARCH_SERVICE_NAME }}
             cosmosAccountName=${{ vars.COSMOS_ACCOUNT_NAME }}
             appServicePlanName=${{ vars.APP_SERVICE_PLAN_NAME }}
             appServiceName=${{ vars.APP_SERVICE_NAME }}
+            githubActionPrincipalId=${{ vars.GITHUB_ACTION_PRINCIPAL_ID }}
             entraClientId=${{ secrets.AZURE_CLIENT_ID }}
             entraTenantId=${{ secrets.AZURE_TENANT_ID }}
-            githubActionPrincipalId=4e29e7e5-3702-4584-8d73-58b6be4f5e4a
-          failOnStdErr: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -48,12 +45,22 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python SDKs
-        run: pip install azure-identity azure-search-documents
+        run: |
+          pip install azure-identity azure-search-documents
+
+      - name: Refresh Azure OIDC Login (for AI Search Setup)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Run AI Search Setup Script
         env:
-          AZURE_SEARCH_ENDPOINT: "https://${{ vars.SEARCH_SERVICE_NAME }}.search.windows.net"
-          AZURE_STORAGE_RESOURCE_ID: "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ vars.RESOURCE_GROUP_NAME }}/providers/Microsoft.Storage/storageAccounts/${{ vars.STORAGE_ACCOUNT_NAME }}"
-          AZURE_OPENAI_ENDPOINT: "https://${{ vars.OPENAI_ACCOUNT_NAME }}.openai.azure.com/"
-          AZURE_OPENAI_EMBEDDING_DEPLOYMENT: "embedding"
-        run: python src/scripts/setup_search.py
+          AZURE_SEARCH_ENDPOINT: https://${{ vars.SEARCH_SERVICE_NAME }}.search.windows.net
+          AZURE_STORAGE_RESOURCE_ID: /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ vars.RESOURCE_GROUP_NAME }}/providers/Microsoft.Storage/storageAccounts/${{ vars.STORAGE_ACCOUNT_NAME }}
+          AZURE_OPENAI_ENDPOINT: https://${{ vars.OPENAI_ACCOUNT_NAME }}.openai.azure.com
+          AZURE_OPENAI_EMBEDDING_DEPLOYMENT: embedding
+          STORAGE_CONTAINER_NAME: ${{ vars.STORAGE_CONTAINER_NAME }}
+        run: |
+          python src/scripts/setup_search.py
