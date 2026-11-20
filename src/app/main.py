@@ -14,7 +14,7 @@ from azure.search.documents.models import VectorizedQuery
 from azure.cosmos import CosmosClient
 from openai import AzureOpenAI
 
-from learn_search import search_learn
+from learn_search import learn_diagnostics, search_learn
 
 # 1. Initialize the FastAPI App
 app = FastAPI(title="Azure MS Cloud Chatbot API")
@@ -128,6 +128,17 @@ def search_internal_kb(question: str) -> list[dict]:
     return [{"title": doc["title"], "content": doc["content"]} for doc in results]
 
 
+# Diagnostic page: shows what the Microsoft Learn server returns from this App Service.
+# Open https://<app>.azurewebsites.net/learn-test?q=reset%20indexer while signed in.
+@app.get("/learn-test")
+async def learn_test(request: Request, q: str = "reset Azure AI Search indexer"):
+    get_current_user(request)
+    result = await learn_diagnostics(q)
+    result["learn_search_enabled"] = ENABLE_LEARN_SEARCH
+    result["query"] = q
+    return result
+
+
 # 7. Data Models
 class ChatRequest(BaseModel):
     messages: list
@@ -186,6 +197,16 @@ async def chat_endpoint(payload: ChatRequest, request: Request):
           limits and how-to steps, and include the article URL when you use one.
         If the sources disagree, say so and explain both.
         If the answer is not in the context, politely say that you don't know and do not guess.
+
+        FORMAT YOUR ANSWER IN MARKDOWN:
+        - Start with a short heading using "### " that names the task or topic.
+        - Follow with one or two plain sentences that directly answer the question.
+        - Put procedures in numbered steps (1., 2., 3.), one action per step.
+        - Use "#### " sub-headings only if the answer has distinct parts (for example "Before you start", "Verify").
+        - Use bullet points for lists of options or checks.
+        - Use **bold** only for exact UI labels, buttons and setting names, never for whole sentences.
+        - Put commands, file paths and code in `inline code` or fenced code blocks.
+        - Do not add a "Sources" section; sources are shown separately.
 
         Context:
         {retrieved_context or "(no matching sources found)"}

@@ -6,9 +6,37 @@
     <title>Azure MS Cloud Chatbot</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Markdown rendering for bot answers (sanitized before display) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
     <style>
+        body { font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
+
+        /* Formatted bot answers */
+        .md-answer { font-size: 14px; line-height: 1.65; color: #1e293b; word-wrap: break-word; }
+        .md-answer > *:first-child { margin-top: 0; }
+        .md-answer > *:last-child { margin-bottom: 0; }
+        .md-answer h1, .md-answer h2, .md-answer h3 { font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px; }
+        .md-answer h4, .md-answer h5, .md-answer h6 { font-size: 14px; font-weight: 600; color: #004578; margin: 14px 0 6px; }
+        .md-answer p { margin: 0 0 10px; }
+        .md-answer ul, .md-answer ol { margin: 0 0 10px; padding-left: 22px; }
+        .md-answer ul { list-style: disc; }
+        .md-answer ol { list-style: decimal; }
+        .md-answer li { margin: 4px 0; padding-left: 2px; }
+        .md-answer li::marker { color: #64748b; }
+        .md-answer ol > li::marker { font-weight: 600; color: #0078d4; }
+        .md-answer strong { font-weight: 600; color: #0f172a; }
+        .md-answer a { color: #0078d4; text-decoration: underline; text-underline-offset: 2px; }
+        .md-answer code { font-family: Consolas, "Cascadia Mono", "Courier New", monospace; font-size: 12.5px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 4px; padding: 1px 5px; }
+        .md-answer pre { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; overflow-x: auto; }
+        .md-answer pre code { background: none; border: 0; padding: 0; color: inherit; font-size: 12.5px; }
+        .md-answer blockquote { border-left: 3px solid #0078d4; background: #f8fafc; padding: 6px 12px; margin: 0 0 10px; color: #475569; }
+        .md-answer table { border-collapse: collapse; margin: 0 0 10px; font-size: 13px; display: block; overflow-x: auto; }
+        .md-answer th, .md-answer td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
+        .md-answer th { background: #f1f5f9; font-weight: 600; }
+        .md-answer hr { border: 0; border-top: 1px solid #e2e8f0; margin: 12px 0; }
     </style>
 </head>
 <body class="bg-[#f8fafc] h-screen flex flex-col font-sans text-slate-800">
@@ -331,6 +359,28 @@
             }
         }
 
+        // Render the model's Markdown as clean, sanitized HTML.
+        // Returns false if the libraries didn't load, so the caller falls back to plain text.
+        if (window.DOMPurify) {
+            DOMPurify.addHook('afterSanitizeAttributes', node => {
+                if (node.tagName === 'A') {
+                    node.setAttribute('target', '_blank');
+                    node.setAttribute('rel', 'noopener noreferrer');
+                }
+            });
+        }
+        function renderMarkdown(el, markdown) {
+            if (!window.marked || !window.DOMPurify || typeof markdown !== 'string') return false;
+            try {
+                const html = marked.parse(markdown, { gfm: true, breaks: true });
+                el.innerHTML = DOMPurify.sanitize(html, { FORBID_TAGS: ['img', 'style', 'form', 'input'] });
+                return true;
+            } catch (err) {
+                console.error('Markdown render failed:', err);
+                return false;
+            }
+        }
+
         // Microsoft Learn search page for a question (opens in a new tab)
         function learnSearchUrl(question) {
             const terms = (question || '').trim().slice(0, 200);
@@ -386,10 +436,12 @@
                 : 'bg-white text-slate-800 rounded-2xl rounded-tl-none px-4 py-3 max-w-2xl text-sm leading-relaxed border border-slate-200 shadow-sm space-y-2';
 
             const contentEl = document.createElement('div');
-            contentEl.className = 'whitespace-pre-wrap';
             if (isHtml) {
                 contentEl.innerHTML = text;
+            } else if (role === 'assistant' && renderMarkdown(contentEl, text)) {
+                contentEl.className = 'md-answer';
             } else {
+                contentEl.className = 'whitespace-pre-wrap';
                 contentEl.textContent = text;
             }
             bubble.appendChild(contentEl);
