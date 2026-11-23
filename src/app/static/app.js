@@ -859,7 +859,8 @@ function createAssistantBubble() {
     wrapper.appendChild(bubble);
     chatStream.appendChild(wrapper);
 
-    let renderQueued = false;
+    let pendingFrame = null;     // queued streaming redraw, if any
+    let finished = false;        // set once the final text is shown; streaming redraws stop after this
     let latestText = '';
     const ctx = { sessionId: null, turnId: null, refs: [] };   // used by [n] markers and reference chips
 
@@ -887,11 +888,12 @@ function createAssistantBubble() {
         },
         // Streaming: re-render at most once per animation frame
         streamText(text) {
+            if (finished) return;
             latestText = text;
-            if (renderQueued) return;
-            renderQueued = true;
-            requestAnimationFrame(() => {
-                renderQueued = false;
+            if (pendingFrame !== null) return;
+            pendingFrame = requestAnimationFrame(() => {
+                pendingFrame = null;
+                if (finished) return;
                 status.classList.add('hidden');
                 renderMarkdown(answer, latestText);
                 linkCitations(answer, ctx);
@@ -899,7 +901,10 @@ function createAssistantBubble() {
                 scrollToBottom();
             });
         },
+        // Final text: cancel any queued streaming redraw so it can't bring the blinking cursor back
         setText(text) {
+            finished = true;
+            if (pendingFrame !== null) { cancelAnimationFrame(pendingFrame); pendingFrame = null; }
             latestText = text;
             status.classList.add('hidden');
             renderMarkdown(answer, text);
