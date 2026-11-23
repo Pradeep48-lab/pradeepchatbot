@@ -449,20 +449,53 @@ function refPassages(ref) {
     return ref.passages || [{ part: ref.part, content: ref.content || '' }];
 }
 
+// One entry per original file. Chats saved by the earlier version have one reference per
+// section (several for the same file): merge those, and remember which old numbers map to which file.
+function normalizeReferences(raw) {
+    const files = [], byNumber = new Map(), byTitle = new Map();
+    (raw || []).forEach(r => {
+        if (r.passages) {                       // already one per file
+            const f = { ...r, srcN: r.n };
+            files.push(f);
+            byNumber.set(r.n, f);
+            return;
+        }
+        let f = byTitle.get(r.title);
+        if (!f) {
+            f = { n: files.length + 1, title: r.title, passages: [], srcN: r.n };
+            byTitle.set(r.title, f);
+            files.push(f);
+        }
+        f.passages.push({ part: r.part, content: r.content || '' });
+        byNumber.set(r.n, f);
+    });
+    files.forEach(f => f.passages.sort((a, b) => (a.part ?? 1e9) - (b.part ?? 1e9)));
+    return { files, byNumber };
+}
+
+function setReferences(ctx, raw) {
+    const { files, byNumber } = normalizeReferences(raw);
+    ctx.refs = files;
+    ctx.byNumber = byNumber;
+}
+
 function referenceLabel(ref) {
     return ref.title || 'Source';
 }
 
-function citedNumbers(text) {
+// Which files the answer cites (by file number, whatever numbers the answer used)
+function citedFiles(text, ctx) {
     const cited = new Set();
-    for (const m of (text || '').matchAll(CITATION_RE)) cited.add(Number(m[1]));
+    for (const m of (text || '').matchAll(CITATION_RE)) {
+        const f = ctx.byNumber && ctx.byNumber.get(Number(m[1]));
+        if (f) cited.add(f.n);
+    }
     return cited;
 }
 
 // Turn "[2]" in the rendered answer into a small clickable superscript (text nodes only, never inside code)
 function linkCitations(container, ctx) {
     if (!ctx.refs || !ctx.refs.length) return;
-    const known = new Set(ctx.refs.map(r => r.n));
     const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
         acceptNode: (node) => (node.parentElement && node.parentElement.closest('code, pre, a, button'))
             ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
@@ -473,13 +506,17 @@ function linkCitations(container, ctx) {
         const text = node.nodeValue;
         const frag = document.createDocumentFragment();
         let last = 0;
+        let groupFiles = new Set();             // files already marked in this run of adjacent markers
         for (const m of text.matchAll(CITATION_RE)) {
-            const n = Number(m[1]);
+            const between = text.slice(last, m.index);
+            if (between.trim()) groupFiles = new Set();
             // Markers sit right after the word ("mismatch¹"); numbers with no matching source are dropped
-            frag.appendChild(document.createTextNode(text.slice(last, m.index).replace(/[ \t]+$/, '')));
+            frag.appendChild(document.createTextNode(between.replace(/[ \t]+$/, '')));
             last = m.index + m[0].length;
-            if (!known.has(n)) continue;
-            const ref = ctx.refs.find(r => r.n === n);
+            const ref = ctx.byNumber && ctx.byNumber.get(Number(m[1]));
+            if (!ref || groupFiles.has(ref.n)) continue;   // "[1][2]" from the same file shows once
+            groupFiles.add(ref.n);
+            const n = ref.n;
             const marker = el('button', 'cite-marker', String(n));
             marker.type = 'button';
             marker.title = referenceLabel(ref);
@@ -497,7 +534,7 @@ function linkCitations(container, ctx) {
 function buildReferences(ctx, answerText) {
     const refs = ctx.refs || [];
     if (!refs.length) return null;
-    const cited = citedNumbers(answerText);
+    const cited = citedFiles(answerText, ctx);
     const panel = el('div', 'references mt-2 pt-2 border-t border-slate-100');
 
     const head = el('div', 'flex items-center justify-between gap-2 mb-1.5');
@@ -511,14 +548,14 @@ function buildReferences(ctx, answerText) {
     const list = el('div', 'flex flex-col');
     refs.forEach(ref => {
         const isCited = cited.has(ref.n);
-        const row = el('button', 'reference-file flex items-center gap-2.5 min-w-0 w-full text-left rounded-md px-2 py-1.5 hover:bg-[#f3f9fd]'
+        const row = el('button', 'reference-file flex items-start gap-2.5 min-w-0 w-full text-left rounded-md px-2 py-1.5 hover:bg-[#f3f9fd]'
             + (isCited ? '' : ' opacity-60'));
         row.type = 'button';
         row.title = `Open ${referenceLabel(ref)}` + (isCited ? '' : ' (retrieved, not cited in the answer)');
         row.append(
             el('span', 'shrink-0 w-5 h-5 rounded border border-slate-300 text-[10px] text-slate-600 flex items-center justify-center', String(ref.n)),
             icon('fa-regular fa-file-lines text-slate-400 shrink-0'),
-            el('span', 'truncate text-xs text-[#0078d4] hover:underline', referenceLabel(ref)),
+            el('span', 'min-w-0 break-all text-xs text-[#0078d4] hover:underline', referenceLabel(ref)),   // full name, never cut off
         );
         row.addEventListener('click', () => openReference(ref, ctx));
         list.appendChild(row);
@@ -579,7 +616,8 @@ function getViewer() {
 }
 
 function sourceUrl(ctx, ref, download) {
-    return `/source/${encodeURIComponent(ctx.sessionId)}/${encodeURIComponent(ctx.turnId)}/${ref.n}` + (download ? '?download=true' : '');
+    // srcN: the number the server stored for this file (differs from ref.n in chats saved by the earlier version)
+    return `/source/${encodeURIComponent(ctx.sessionId)}/${encodeURIComponent(ctx.turnId)}/${ref.srcN ?? ref.n}` + (download ? '?download=true' : '');
 }
 
 function openReference(ref, ctx) {
@@ -892,7 +930,7 @@ function createAssistantBubble() {
             scrollToBottom();
         },
         applyMeta(meta) {
-            ctx.refs = meta.references || [];
+            setReferences(ctx, meta.references || []);
             header.innerHTML = '';
             const badge = buildConfidenceBadge(meta.confidence);
             if (badge) header.appendChild(badge);
@@ -932,7 +970,7 @@ function createAssistantBubble() {
         finish(turnId, question, meta) {
             ctx.turnId = turnId || null;
             ctx.sessionId = meta.session_id || currentSessionId;
-            if (meta.references && meta.references.length) ctx.refs = meta.references;
+            if (meta.references && meta.references.length) setReferences(ctx, meta.references);
             extras.innerHTML = '';
             [buildTicketsPanel(meta.similar_tickets),
              ctx.refs.length ? buildReferences(ctx, latestText) : buildLegacyCitations(meta.context)]
