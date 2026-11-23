@@ -11,6 +11,8 @@ resource openAiAccount 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
   properties: {
     customSubDomainName: openAiName
     publicNetworkAccess: 'Enabled'
+    // API keys off: only Microsoft Entra ID (managed identity / RBAC) can call the models
+    disableLocalAuth: true
   }
 }
 

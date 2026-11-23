@@ -1,0 +1,57 @@
+/* App styles (kept out of index.html so the Content-Security-Policy can forbid inline CSS) */
+body { font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; }
+.custom-scrollbar::-webkit-scrollbar { width: 6px; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
+
+/* Formatted bot answers */
+.md-answer { font-size: 14px; line-height: 1.65; color: #1e293b; word-wrap: break-word; }
+.md-answer > *:first-child { margin-top: 0; }
+.md-answer > *:last-child { margin-bottom: 0; }
+.md-answer h1, .md-answer h2, .md-answer h3 { font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px; }
+.md-answer h4, .md-answer h5, .md-answer h6 { font-size: 14px; font-weight: 600; color: #004578; margin: 14px 0 6px; }
+.md-answer p { margin: 0 0 10px; }
+.md-answer ul, .md-answer ol { margin: 0 0 10px; padding-left: 22px; }
+.md-answer ul { list-style: disc; }
+.md-answer ol { list-style: decimal; }
+.md-answer li { margin: 4px 0; padding-left: 2px; }
+.md-answer li::marker { color: #64748b; }
+.md-answer ol > li::marker { font-weight: 600; color: #0078d4; }
+.md-answer strong { font-weight: 600; color: #0f172a; }
+.md-answer a { color: #0078d4; text-decoration: underline; text-underline-offset: 2px; }
+.md-answer code { font-family: Consolas, "Cascadia Mono", "Courier New", monospace; font-size: 12.5px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 4px; padding: 1px 5px; }
+.md-answer pre { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; overflow-x: auto; }
+.md-answer pre code { background: none; border: 0; padding: 0; color: inherit; font-size: 12.5px; }
+.md-answer blockquote { border-left: 3px solid #0078d4; background: #f8fafc; padding: 6px 12px; margin: 0 0 10px; color: #475569; }
+.md-answer table { border-collapse: collapse; margin: 0 0 10px; font-size: 13px; display: block; overflow-x: auto; }
+.md-answer th, .md-answer td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
+.md-answer th { background: #f1f5f9; font-weight: 600; }
+.md-answer hr { border: 0; border-top: 1px solid #e2e8f0; margin: 12px 0; }
+
+/* Blinking cursor while an answer is streaming in */
+.md-answer.streaming > :is(p, h1, h2, h3, h4, h5, h6, blockquote):last-child::after,
+.md-answer.streaming > :is(ul, ol):last-child > li:last-child::after,
+.md-answer.streaming:empty::after {
+    content: "▍";
+    color: #0078d4;
+    margin-left: 2px;
+    animation: chatbot-blink 1s steps(1) infinite;
+}
+@keyframes chatbot-blink { 50% { opacity: 0; } }
+
+/* Numbered citation markers in answers, e.g. "...the gateway ¹²" */
+.cite-marker {
+    font-size: 10px;
+    line-height: 1;
+    vertical-align: super;
+    color: #0078d4;
+    background: #eff6fc;
+    border: 1px solid #c7e0f4;
+    border-radius: 3px;
+    padding: 1px 3px;
+    margin-left: 2px;
+    cursor: pointer;
+}
+.cite-marker:hover, .cite-marker:focus-visible { background: #0078d4; color: #fff; outline: none; }
+
+/* Passage highlighted inside the full source file */
+.viewer-highlight { background: #fff4ce; color: inherit; border-radius: 2px; box-shadow: 0 0 0 2px #fff4ce; }

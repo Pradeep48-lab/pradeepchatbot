@@ -7,3 +7,4 @@ azure-search-documents==11.4.0
 azure-cosmos
 pydantic
 httpx
+azure-storage-blob

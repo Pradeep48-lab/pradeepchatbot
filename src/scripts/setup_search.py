@@ -24,7 +24,11 @@ from azure.search.documents.indexes.models import (
     IndexProjectionMode,
     SearchIndexerIndexProjection,
     SearchIndexerIndexProjectionsParameters,
-    SearchIndexerIndexProjectionSelector
+    SearchIndexerIndexProjectionSelector,
+    SemanticConfiguration,
+    SemanticField,
+    SemanticPrioritizedFields,
+    SemanticSearch,
 )
 
 
@@ -93,7 +97,22 @@ def setup_search_pipeline():
         ]
     )
 
-    index = SearchIndex(name=index_name, fields=fields, vector_search=vector_search)
+    # Semantic ranker configuration used by the app's hybrid search (query_type="semantic").
+    # Adding it to an existing index doesn't require re-indexing.
+    semantic_search = SemanticSearch(
+        default_configuration_name="default",
+        configurations=[
+            SemanticConfiguration(
+                name="default",
+                prioritized_fields=SemanticPrioritizedFields(
+                    title_field=SemanticField(field_name="title"),
+                    content_fields=[SemanticField(field_name="content")],
+                ),
+            )
+        ],
+    )
+
+    index = SearchIndex(name=index_name, fields=fields, vector_search=vector_search, semantic_search=semantic_search)
     index_client.create_or_update_index(index)
 
     print("3. Creating Skillset (Chunking & Embedding)...")

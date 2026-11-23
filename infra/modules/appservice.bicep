@@ -27,6 +27,18 @@ param cosmosContainer string = 'history'
 param entraClientId string
 param entraTenantId string
 
+@description('Azure AI Content Safety endpoint for Prompt Shields. Empty turns Prompt Shields off.')
+param contentSafetyEndpoint string = ''
+
+@description('Blob endpoint of the storage account that holds the source documents, e.g. https://<name>.blob.core.windows.net')
+param storageAccountUrl string
+
+@description('Container the indexer reads; references open files from here.')
+param storageContainerName string = 'documents'
+
+param rateLimitPerMinute int = 20
+param rateLimitPerDay int = 500
+
 resource appServicePlan 'Microsoft.Web/serverfarms@2022-09-01' = {
   name: appServicePlanName
   location: location
@@ -53,7 +65,31 @@ resource appServiceApp 'Microsoft.Web/sites@2022-09-01' = {
       linuxFxVersion: 'PYTHON|3.11'
       ftpsState: 'Disabled'
       alwaysOn: true
+      minTlsVersion: '1.2'
+      scmMinTlsVersion: '1.2'
+      http20Enabled: true
+      remoteDebuggingEnabled: false
       appSettings: [
+        {
+          name: 'AZURE_CONTENT_SAFETY_ENDPOINT'
+          value: contentSafetyEndpoint
+        }
+        {
+          name: 'AZURE_STORAGE_ACCOUNT_URL'
+          value: storageAccountUrl
+        }
+        {
+          name: 'AZURE_STORAGE_CONTAINER'
+          value: storageContainerName
+        }
+        {
+          name: 'RATE_LIMIT_PER_MINUTE'
+          value: string(rateLimitPerMinute)
+        }
+        {
+          name: 'RATE_LIMIT_PER_DAY'
+          value: string(rateLimitPerDay)
+        }
         // Ensures Azure Oryx runs `pip install -r requirements.txt` during zip deployments.
         // Do NOT set WEBSITE_RUN_FROM_PACKAGE = '1' alongside this setting.
         {
@@ -94,6 +130,24 @@ resource appServiceApp 'Microsoft.Web/sites@2022-09-01' = {
         }
       ]
     }
+  }
+}
+
+// Turn off FTP and Kudu (SCM) username/password publishing credentials.
+// GitHub Actions deploys with OIDC (azure/login) and is unaffected.
+resource ftpBasicAuth 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2022-09-01' = {
+  parent: appServiceApp
+  name: 'ftp'
+  properties: {
+    allow: false
+  }
+}
+
+resource scmBasicAuth 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2022-09-01' = {
+  parent: appServiceApp
+  name: 'scm'
+  properties: {
+    allow: false
   }
 }
 

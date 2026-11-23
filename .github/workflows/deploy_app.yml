@@ -15,10 +15,22 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The UI uses a pre-built Tailwind stylesheet instead of the Tailwind CDN,
+      # so the Content-Security-Policy can block all third-party scripts.
+      - name: Build Tailwind CSS
+        run: |
+          cd src/app
+          npx --yes tailwindcss@3.4.17 -c tailwind/tailwind.config.js -i tailwind/input.css -o static/vendor/tailwind.css --minify
+
       - name: Zip Application Code
         run: |
           cd src/app
-          zip -r ../../app.zip .
+          zip -r ../../app.zip . -x "tailwind/*" "__pycache__/*"
           
       - name: Azure Login
         uses: azure/login@v2

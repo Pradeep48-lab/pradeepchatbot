@@ -4,40 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Azure MS Cloud Chatbot</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Markdown rendering for bot answers (sanitized before display) -->
-    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
-    <style>
-        body { font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
-
-        /* Formatted bot answers */
-        .md-answer { font-size: 14px; line-height: 1.65; color: #1e293b; word-wrap: break-word; }
-        .md-answer > *:first-child { margin-top: 0; }
-        .md-answer > *:last-child { margin-bottom: 0; }
-        .md-answer h1, .md-answer h2, .md-answer h3 { font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px; }
-        .md-answer h4, .md-answer h5, .md-answer h6 { font-size: 14px; font-weight: 600; color: #004578; margin: 14px 0 6px; }
-        .md-answer p { margin: 0 0 10px; }
-        .md-answer ul, .md-answer ol { margin: 0 0 10px; padding-left: 22px; }
-        .md-answer ul { list-style: disc; }
-        .md-answer ol { list-style: decimal; }
-        .md-answer li { margin: 4px 0; padding-left: 2px; }
-        .md-answer li::marker { color: #64748b; }
-        .md-answer ol > li::marker { font-weight: 600; color: #0078d4; }
-        .md-answer strong { font-weight: 600; color: #0f172a; }
-        .md-answer a { color: #0078d4; text-decoration: underline; text-underline-offset: 2px; }
-        .md-answer code { font-family: Consolas, "Cascadia Mono", "Courier New", monospace; font-size: 12.5px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 4px; padding: 1px 5px; }
-        .md-answer pre { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; overflow-x: auto; }
-        .md-answer pre code { background: none; border: 0; padding: 0; color: inherit; font-size: 12.5px; }
-        .md-answer blockquote { border-left: 3px solid #0078d4; background: #f8fafc; padding: 6px 12px; margin: 0 0 10px; color: #475569; }
-        .md-answer table { border-collapse: collapse; margin: 0 0 10px; font-size: 13px; display: block; overflow-x: auto; }
-        .md-answer th, .md-answer td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
-        .md-answer th { background: #f1f5f9; font-weight: 600; }
-        .md-answer hr { border: 0; border-top: 1px solid #e2e8f0; margin: 12px 0; }
-    </style>
+    <!-- All assets are served from this app (no CDNs) so a strict Content-Security-Policy can apply -->
+    <link rel="stylesheet" href="/static/vendor/tailwind.css">
+    <link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css">
+    <link rel="stylesheet" href="/static/app.css">
+    <!-- Markdown rendering for bot answers (sanitized with DOMPurify before display) -->
+    <script src="/static/vendor/marked.min.js" defer></script>
+    <script src="/static/vendor/purify.min.js" defer></script>
+    <script src="/static/app.js" defer></script>
 </head>
 <body class="bg-[#f8fafc] h-screen flex flex-col font-sans text-slate-800">
 
@@ -81,14 +55,19 @@
 
             <!-- Input Box Section -->
             <div class="w-full max-w-3xl px-6 pb-6 pt-2">
-                <div class="bg-white border border-slate-300 rounded-xl shadow-sm focus-within:ring-2 focus-within:ring-[#0078d4] focus-within:border-transparent p-3 flex flex-col">
-                    <textarea id="userInput" rows="2" placeholder="Type a new question..." class="w-full resize-none outline-none text-sm text-slate-700 placeholder-slate-400"></textarea>
+                <div id="composer" class="bg-white border border-slate-300 rounded-xl shadow-sm focus-within:ring-2 focus-within:ring-[#0078d4] focus-within:border-transparent p-3 flex flex-col">
+                    <!-- Attached screenshots / log files waiting to be sent -->
+                    <div id="attachTray" class="hidden flex flex-wrap gap-2 pb-2"></div>
+                    <div id="attachError" class="hidden text-xs text-red-600 pb-2"></div>
+                    <textarea id="userInput" rows="2" placeholder="Type a question, or paste a screenshot of the error..." class="w-full resize-none outline-none text-sm text-slate-700 placeholder-slate-400"></textarea>
                     <div class="flex justify-between items-center pt-2">
                         <div class="flex space-x-2 text-slate-400 text-xs">
-                            <span class="hover:text-slate-600 cursor-pointer p-1"><i class="fa-solid fa-paperclip"></i></span>
-                            <span class="hover:text-slate-600 cursor-pointer p-1" title="New chat" onclick="startNewChat()"><i class="fa-regular fa-pen-to-square"></i></span>
+                            <input id="fileInput" type="file" class="hidden" multiple
+                                   accept="image/png,image/jpeg,image/webp,image/gif,.txt,.log,.json,.csv,.md,.xml,.yaml,.yml,.ini,.cfg,.out,.err,text/plain">
+                            <button id="attachBtn" type="button" class="hover:text-slate-600 cursor-pointer p-1 disabled:opacity-40" title="Attach a screenshot or log file (or paste / drag it in)" aria-label="Attach a screenshot or log file"><i class="fa-solid fa-paperclip"></i></button>
+                            <span id="newChatInlineBtn" role="button" tabindex="0" class="hover:text-slate-600 cursor-pointer p-1" title="New chat"><i class="fa-regular fa-pen-to-square"></i></span>
                         </div>
-                        <button id="sendBtn" onclick="sendMessage()" class="text-[#0078d4] hover:text-[#106ebe] disabled:opacity-40 p-1">
+                        <button id="sendBtn" type="button" class="text-[#0078d4] hover:text-[#106ebe] disabled:opacity-40 p-1">
                             <i class="fa-solid fa-paper-plane text-base"></i>
                         </button>
                     </div>
@@ -100,7 +79,7 @@
         <aside id="sidebar" class="w-72 bg-white border-l border-slate-200 flex flex-col flex-shrink-0 transition-all duration-300">
             <div class="p-4 border-b border-slate-100 flex items-center justify-between">
                 <span class="text-sm font-semibold text-slate-800">Chat history</span>
-                <button onclick="startNewChat()" title="New Chat" class="text-xs text-slate-500 hover:text-slate-800 p-1">
+                <button id="newChatSidebarBtn" type="button" title="New Chat" class="text-xs text-slate-500 hover:text-slate-800 p-1">
                     <i class="fa-solid fa-plus"></i>
                 </button>
             </div>
@@ -112,368 +91,5 @@
 
     </div>
 
-    <!-- Frontend Script Logic -->
-    <script>
-        let currentSessionId = "session-" + Date.now();
-        let messageHistory = [];
-        let isSending = false;
-
-        // Lock the input while the bot is answering, so a second question
-        // can't be sent before the first reply arrives.
-        function setSending(sending) {
-            isSending = sending;
-            const input = document.getElementById('userInput');
-            const sendBtn = document.getElementById('sendBtn');
-            input.disabled = sending;
-            sendBtn.disabled = sending;
-            input.placeholder = sending ? 'Waiting for the answer...' : 'Type a new question...';
-            input.classList.toggle('bg-white', !sending);
-            input.classList.toggle('cursor-not-allowed', sending);
-            if (!sending) input.focus();
-        }
-
-        // Toggle Sidebar
-        const sidebar = document.getElementById('sidebar');
-        const toggleBtn = document.getElementById('toggleHistoryBtn');
-        const toggleText = document.getElementById('toggleText');
-        toggleBtn.addEventListener('click', () => {
-            sidebar.classList.toggle('hidden');
-            toggleText.textContent = sidebar.classList.contains('hidden') ? 'Show chat history' : 'Hide chat history';
-        });
-
-        // Handle Enter key submit
-        document.getElementById('userInput').addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                if (!isSending) sendMessage();
-            }
-        });
-
-        function highlightActiveSession() {
-            const buttons = document.querySelectorAll('#historyList button[data-session-id]');
-            buttons.forEach(btn => {
-                const isActive = btn.dataset.sessionId === currentSessionId;
-                btn.className = isActive
-                    ? "flex-1 min-w-0 text-left p-2 pr-8 rounded bg-[#e5f1fb] text-[#004578] font-medium truncate cursor-pointer"
-                    : "flex-1 min-w-0 text-left p-2 pr-8 rounded hover:bg-slate-100 text-slate-700 truncate cursor-pointer";
-            });
-        }
-
-        async function deleteSession(sessionId, title) {
-            const label = title && title.length > 60 ? title.slice(0, 60) + '…' : (title || 'this chat');
-            if (!confirm(`Delete "${label}"?\n\nThis permanently removes the chat from your history.`)) return;
-
-            try {
-                const res = await fetch(`/history/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
-                if (!res.ok && res.status !== 404) {
-                    alert(`Could not delete this chat (HTTP ${res.status}).`);
-                    return;
-                }
-                if (sessionId === currentSessionId) startNewChat();
-                loadHistory();
-            } catch (err) {
-                console.error("Failed to delete session:", err);
-                alert('Network error while deleting this chat.');
-            }
-        }
-
-        async function loadHistory() {
-            try {
-                const res = await fetch('/history', { cache: 'no-store' });
-                if (!res.ok) {
-                    console.error("Failed to load history:", res.status);
-                    return;
-                }
-                const sessions = await res.json();
-                const container = document.getElementById('historyList');
-                container.innerHTML = '';
-
-                if (!Array.isArray(sessions) || sessions.length === 0) {
-                    container.innerHTML = '<div class="text-slate-400 px-2 py-1">No past sessions</div>';
-                    return;
-                }
-
-                sessions.forEach(item => {
-                    const title = item.user_message || item.sessionId;
-
-                    const row = document.createElement('div');
-                    row.className = 'group relative flex items-center';
-
-                    const btn = document.createElement('button');
-                    btn.type = 'button';
-                    btn.dataset.sessionId = item.sessionId;
-                    btn.textContent = title;
-                    btn.title = title;
-                    btn.addEventListener('click', () => resumeSession(item.sessionId));
-
-                    const del = document.createElement('button');
-                    del.type = 'button';
-                    del.title = 'Delete chat';
-                    del.setAttribute('aria-label', 'Delete chat: ' + title);
-                    del.className = 'absolute right-1 p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 md:opacity-0 group-hover:opacity-100 focus:opacity-100';
-                    del.innerHTML = '<i class="fa-regular fa-trash-can"></i>';
-                    del.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        deleteSession(item.sessionId, title);
-                    });
-
-                    row.appendChild(btn);
-                    row.appendChild(del);
-                    container.appendChild(row);
-                });
-
-                highlightActiveSession();
-            } catch (err) {
-                console.error("Failed to load history:", err);
-            }
-        }
-
-        async function resumeSession(sessionId) {
-            const stream = document.getElementById('chatStream');
-            try {
-                currentSessionId = sessionId;
-                highlightActiveSession();
-
-                stream.innerHTML = '';
-                const loadingBubble = appendBubble(
-                    stream,
-                    'assistant',
-                    '<i class="fa-solid fa-ellipsis fa-fade"></i> Loading conversation...',
-                    null,
-                    true
-                );
-
-                const res = await fetch(`/history/${encodeURIComponent(sessionId)}`, { cache: 'no-store' });
-                loadingBubble.remove();
-
-                if (!res.ok) {
-                    appendBubble(stream, 'assistant', `Could not load this chat (HTTP ${res.status}).`);
-                    return;
-                }
-
-                const pastInteractions = await res.json();
-                messageHistory = [];
-
-                if (!Array.isArray(pastInteractions) || pastInteractions.length === 0) {
-                    appendBubble(stream, 'assistant', 'No messages were found for this session.');
-                    return;
-                }
-
-                pastInteractions.forEach(turn => {
-                    messageHistory.push({ role: "user", content: turn.user_message });
-                    messageHistory.push({ role: "assistant", content: turn.ai_message });
-
-                    appendBubble(stream, 'user', turn.user_message);
-                    appendBubble(stream, 'assistant', turn.ai_message, turn.context || null, false,
-                        { question: turn.user_message, learnLinks: turn.learn_links || [] });
-                });
-
-                if (window.innerWidth < 768) {
-                    sidebar.classList.add('hidden');
-                    toggleText.textContent = 'Show chat history';
-                }
-            } catch (err) {
-                console.error("Failed to resume session:", err);
-                stream.innerHTML = '';
-                appendBubble(stream, 'assistant', 'Network error while loading this chat.');
-            }
-        }
-
-        function startNewChat() {
-            currentSessionId = "session-" + Date.now();
-            messageHistory = [];
-            const stream = document.getElementById('chatStream');
-            stream.innerHTML = `
-                <div id="heroSection" class="flex flex-col items-center justify-center h-full text-center my-auto pt-16">
-                    <img src="/static/logo.png" alt="Company Logo" class="h-12 object-contain mb-4">
-                    <h2 class="text-2xl font-bold text-slate-900 mb-2">Azure MS Cloud Chatbot. Start chatting.</h2>
-                    <p class="text-sm text-slate-500 max-w-lg leading-relaxed">
-                        Welcome to the Azure MS Cloud Chatbot! Please use it to help resolve customer support issues, find important wiki articles, and improve your workflow.
-                    </p>
-                </div>
-            `;
-            highlightActiveSession();
-        }
-
-        async function sendMessage() {
-            const input = document.getElementById('userInput');
-            const message = input.value.trim();
-            if (!message || isSending) return;
-            setSending(true);
-            const requestSessionId = currentSessionId;
-
-            const hero = document.getElementById('heroSection');
-            if (hero) hero.remove();
-
-            const stream = document.getElementById('chatStream');
-            appendBubble(stream, 'user', message);
-            input.value = '';
-
-            messageHistory.push({ role: "user", content: message });
-
-            const loadingBubble = appendBubble(
-                stream,
-                'assistant',
-                '<i class="fa-solid fa-ellipsis fa-fade"></i> Searching knowledge base and Microsoft Learn...',
-                null,
-                true
-            );
-
-            try {
-                const response = await fetch('/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        messages: messageHistory,
-                        session_id: currentSessionId
-                    })
-                });
-
-                const data = await response.json();
-                loadingBubble.remove();
-
-                // The user switched chats while waiting: the answer is saved, just don't show it here.
-                if (currentSessionId !== requestSessionId) {
-                    loadHistory();
-                    return;
-                }
-
-                if (response.ok) {
-                    const aiReply = data.message.content;
-                    appendBubble(stream, 'assistant', aiReply, data.context || null, false,
-                        { question: message, learnLinks: data.learn_links || [] });
-                    messageHistory.push({ role: "assistant", content: aiReply });
-                    loadHistory();
-                } else {
-                    messageHistory.pop();
-                    appendBubble(stream, 'assistant', 'Error: ' + (data.detail || 'Could not process query.'));
-                }
-            } catch (err) {
-                loadingBubble.remove();
-                if (currentSessionId === requestSessionId) {
-                    messageHistory.pop();
-                    appendBubble(stream, 'assistant', 'Network error connecting to API.');
-                }
-            } finally {
-                setSending(false);
-            }
-        }
-
-        // Render the model's Markdown as clean, sanitized HTML.
-        // Returns false if the libraries didn't load, so the caller falls back to plain text.
-        if (window.DOMPurify) {
-            DOMPurify.addHook('afterSanitizeAttributes', node => {
-                if (node.tagName === 'A') {
-                    node.setAttribute('target', '_blank');
-                    node.setAttribute('rel', 'noopener noreferrer');
-                }
-            });
-        }
-        function renderMarkdown(el, markdown) {
-            if (!window.marked || !window.DOMPurify || typeof markdown !== 'string') return false;
-            try {
-                const html = marked.parse(markdown, { gfm: true, breaks: true });
-                el.innerHTML = DOMPurify.sanitize(html, { FORBID_TAGS: ['img', 'style', 'form', 'input'] });
-                return true;
-            } catch (err) {
-                console.error('Markdown render failed:', err);
-                return false;
-            }
-        }
-
-        // Microsoft Learn search page for a question (opens in a new tab)
-        function learnSearchUrl(question) {
-            const terms = (question || '').trim().slice(0, 200);
-            return 'https://learn.microsoft.com/en-us/search/?terms=' + encodeURIComponent(terms);
-        }
-
-        // "Search Microsoft Learn" button + related Learn articles, shown under each answer
-        function buildLearnPanel(question, learnLinks) {
-            const panel = document.createElement('div');
-            panel.className = 'mt-2 pt-2 border-t border-slate-100 flex flex-col gap-2';
-
-            const links = (learnLinks || []).filter(l => l && typeof l.url === 'string' && l.url.startsWith('https://learn.microsoft.com/'));
-            if (links.length) {
-                const label = document.createElement('div');
-                label.className = 'text-[11px] font-semibold uppercase tracking-wide text-slate-500';
-                label.textContent = 'Related on Microsoft Learn';
-                panel.appendChild(label);
-
-                const list = document.createElement('div');
-                list.className = 'flex flex-col gap-1';
-                links.forEach(l => {
-                    const a = document.createElement('a');
-                    a.href = l.url;
-                    a.target = '_blank';
-                    a.rel = 'noopener noreferrer';
-                    a.className = 'text-xs text-[#0078d4] hover:underline truncate';
-                    a.title = l.url;
-                    a.innerHTML = '<i class="fa-solid fa-arrow-up-right-from-square text-[10px] mr-1"></i>';
-                    a.appendChild(document.createTextNode(l.title || l.url));
-                    list.appendChild(a);
-                });
-                panel.appendChild(list);
-            }
-
-            const btn = document.createElement('a');
-            btn.href = learnSearchUrl(question);
-            btn.target = '_blank';
-            btn.rel = 'noopener noreferrer';
-            btn.className = 'self-start inline-flex items-center gap-1.5 text-xs border border-[#0078d4] text-[#0078d4] hover:bg-[#e5f1fb] rounded-full px-3 py-1';
-            btn.innerHTML = '<i class="fa-brands fa-microsoft"></i><span>Search Microsoft Learn for this topic</span>';
-            panel.appendChild(btn);
-
-            return panel;
-        }
-
-        function appendBubble(container, role, text, context = null, isHtml = false, learn = null) {
-            const wrapper = document.createElement('div');
-            wrapper.className = role === 'user' ? 'flex justify-end' : 'flex justify-start';
-
-            const bubble = document.createElement('div');
-            bubble.className = role === 'user'
-                ? 'bg-[#e5f1fb] text-[#004578] rounded-2xl rounded-tr-none px-4 py-3 max-w-xl text-sm leading-relaxed border border-[#c7e0f4]'
-                : 'bg-white text-slate-800 rounded-2xl rounded-tl-none px-4 py-3 max-w-2xl text-sm leading-relaxed border border-slate-200 shadow-sm space-y-2';
-
-            const contentEl = document.createElement('div');
-            if (isHtml) {
-                contentEl.innerHTML = text;
-            } else if (role === 'assistant' && renderMarkdown(contentEl, text)) {
-                contentEl.className = 'md-answer';
-            } else {
-                contentEl.className = 'whitespace-pre-wrap';
-                contentEl.textContent = text;
-            }
-            bubble.appendChild(contentEl);
-
-            if (context && role === 'assistant') {
-                const details = document.createElement('details');
-                details.className = "mt-2 pt-2 border-t border-slate-100 text-xs text-slate-500";
-
-                const summary = document.createElement('summary');
-                summary.className = "cursor-pointer font-semibold text-[#0078d4] hover:underline";
-                summary.textContent = "View Citations / Sources";
-
-                const pre = document.createElement('pre');
-                pre.className = "mt-1 p-2 bg-slate-50 rounded whitespace-pre-wrap font-mono text-[11px]";
-                pre.textContent = context;
-
-                details.appendChild(summary);
-                details.appendChild(pre);
-                bubble.appendChild(details);
-            }
-
-            if (learn && role === 'assistant' && learn.question) {
-                bubble.appendChild(buildLearnPanel(learn.question, learn.learnLinks));
-            }
-
-            wrapper.appendChild(bubble);
-            container.appendChild(wrapper);
-            container.scrollTop = container.scrollHeight;
-            return wrapper;
-        }
-
-        loadHistory();
-    </script>
 </body>
 </html>

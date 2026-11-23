@@ -5,8 +5,11 @@ param storageAccountId string
 param openAiAccountId string
 param searchAccountId string
 param cosmosAccountId string
+@description('Content Safety resource ID; empty when Prompt Shields is turned off.')
+param contentSafetyAccountId string = ''
 
 var roleCognitiveServicesOpenAIUser = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+var roleCognitiveServicesUser = 'a97b65f3-24c7-4388-baec-2e87135dc908'
 var roleSearchIndexDataReader = '1407120a-92aa-4202-b7e9-c0e197c71c8f'
 var roleStorageBlobDataReader = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
 var roleSearchServiceContributor = '7ca78c08-252a-4471-8644-bb5ff32d4ba0'
@@ -15,6 +18,14 @@ var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
   name: last(split(storageAccountId, '/'))
+
+  resource blobService 'blobServices' existing = {
+    name: 'default'
+
+    resource documentsContainer 'containers' existing = {
+      name: 'documents'
+    }
+  }
 }
 resource openAiAccount 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
   name: last(split(openAiAccountId, '/'))
@@ -26,7 +37,33 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' existi
   name: last(split(cosmosAccountId, '/'))
 }
 
+resource contentSafetyAccount 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = if (!empty(contentSafetyAccountId)) {
+  name: empty(contentSafetyAccountId) ? 'none' : last(split(contentSafetyAccountId, '/'))
+}
+
 // 1. APP SERVICE ROLES
+// App -> Storage: read-only, and only the 'documents' container, so references can open source files
+resource appDocumentsReaderRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(appPrincipalId, storageAccountId, 'documents', roleStorageBlobDataReader)
+  scope: storageAccount::blobService::documentsContainer
+  properties: {
+    principalId: appPrincipalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleStorageBlobDataReader)
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// App -> Content Safety: call Prompt Shields with its managed identity
+resource appContentSafetyRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(contentSafetyAccountId)) {
+  name: guid(appPrincipalId, contentSafetyAccountId, roleCognitiveServicesUser)
+  scope: contentSafetyAccount
+  properties: {
+    principalId: appPrincipalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleCognitiveServicesUser)
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource appOpenAiRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(appPrincipalId, openAiAccountId, roleCognitiveServicesOpenAIUser)
   scope: openAiAccount

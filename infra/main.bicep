@@ -10,6 +10,28 @@ param entraClientId string
 param entraTenantId string
 param githubActionPrincipalId string
 
+@description('Deploy Azure AI Content Safety and turn on Prompt Shields in the app.')
+param enablePromptShields bool = true
+
+@description('Name (and subdomain) of the Content Safety resource. Must be globally unique.')
+param contentSafetyName string = '${openAiName}-safety'
+
+@description('Semantic ranker plan for AI Search: disabled, free (1,000 queries/month) or standard.')
+@allowed([
+  'disabled'
+  'free'
+  'standard'
+])
+param semanticSearch string = 'standard'
+
+module contentSafety 'modules/contentsafety.bicep' = if (enablePromptShields) {
+  name: 'contentSafetyDeploy'
+  params: {
+    location: location
+    contentSafetyName: contentSafetyName
+  }
+}
+
 module storage 'modules/storage.bicep' = {
   name: 'storageDeploy'
   params: {
@@ -32,6 +54,7 @@ module search 'modules/search.bicep' = {
   params: {
     location: location
     searchServiceName: searchServiceName
+    semanticSearch: semanticSearch
   }
 }
 
@@ -58,6 +81,10 @@ module appService 'modules/appservice.bicep' = {
     cosmosEndpoint: cosmos.outputs.endpoint
     cosmosDbName: 'chatdb'
     cosmosContainer: 'history'
+    contentSafetyEndpoint: enablePromptShields ? contentSafety!.outputs.endpoint : ''
+    // setup_search.py points the indexer at the 'documents' container
+    storageAccountUrl: 'https://${storageAccountName}.blob.${environment().suffixes.storage}'
+    storageContainerName: 'documents'
   }
 }
 
@@ -71,5 +98,6 @@ module roles 'modules/roles.bicep' = {
     openAiAccountId: openai.outputs.id
     searchAccountId: search.outputs.id
     cosmosAccountId: cosmos.outputs.id
+    contentSafetyAccountId: enablePromptShields ? contentSafety!.outputs.id : ''
   }
 }

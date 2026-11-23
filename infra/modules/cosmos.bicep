@@ -19,6 +19,11 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
         name: 'EnableServerless'
       }
     ]
+    // Account keys off: data access only through Entra ID data-plane roles
+    disableLocalAuth: true
+    // Databases/containers can only be changed through Azure Resource Manager (Bicep), not with keys
+    disableKeyBasedMetadataWriteAccess: true
+    minimalTlsVersion: 'Tls12'
   }
 }
 
