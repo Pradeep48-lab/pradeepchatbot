@@ -142,15 +142,15 @@ az cosmosdb sql role assignment create -g $RG -a <COSMOS_ACCOUNT_NAME> --scope "
 
 ## References (citations)
 
-Each answer cites the knowledge-base passages it used, like Copilot does:
+Each answer cites the original files it used:
 
-- **Numbered markers in the answer** (¹ ²): the model is told to cite every sentence or step with the number of the source passage it came from. Numbers that don't match a retrieved passage are dropped.
-- **"N references" grid under the answer**: one chip per retrieved passage, showing the source file and which part of it (`2310060040008914.txt - Part 3`). Retrieved-but-not-cited passages are shown dimmed. The list can be collapsed.
-- **Click a marker or chip** to see the exact passage the answer was based on. **Open full file** loads the original file from the storage account with that passage highlighted; **Download** saves it. PDFs and other non-text files are always downloaded, never rendered in the page.
-- **How the parts are numbered:** the indexer splits each file into ~2,000-character parts (`setup_search.py`, SplitSkill). Part numbers come from the chunk key (`..._pages_0` = Part 1).
-- **Security:** the browser never sends a file path. `GET /source/{session}/{answer}/{n}` looks up reference *n* on the user's own saved answer and reads that blob with the App Service's managed identity, which has **Storage Blob Data Reader on the `documents` container only**. Files over `MAX_SOURCE_BYTES` (5 MB) aren't opened.
-- **Settings:** `SEARCH_TOP` (8) = passages retrieved per question = maximum references. `AZURE_STORAGE_ACCOUNT_URL` / `AZURE_STORAGE_CONTAINER` are set by Bicep.
-- Chats saved before this change still show their old sources under **View sources**.
+- **Numbered markers in the answer** (¹ ²): one number per source *file*. The model cites every sentence or step; numbers that don't match a source are dropped.
+- **"Sources (N files)" list under the answer**: one row per original file name (e.g. `2310060040008914.txt`), in order of best match. Files that were retrieved but not cited are dimmed. The list can be collapsed.
+- **Click a file (or a marker)** to open the whole original file from the storage account, with every section the answer used highlighted; **Download** saves it. PDFs and other non-text files are downloaded, never rendered in the page.
+- **More variety per answer:** search takes the 20 best-ranked sections, then keeps at most `MAX_PARTS_PER_FILE` (3) from any one file, up to `SEARCH_TOP` (8) sections in total, so one very large file can't crowd out other tickets. (Files are split into ~2,000-character sections by the indexer; large combined exports are best split into one file per ticket.)
+- **Security:** the browser never sends a file path. `GET /source/{session}/{answer}/{n}` looks up source *n* on the user's own saved answer and reads that blob with the App Service's managed identity, which has **Storage Blob Data Reader on the `documents` container only**. Files over `MAX_SOURCE_BYTES` (5 MB) aren't opened.
+- **Settings:** `SEARCH_TOP` (8), `SEARCH_CANDIDATES` (20), `MAX_PARTS_PER_FILE` (3). `AZURE_STORAGE_ACCOUNT_URL` / `AZURE_STORAGE_CONTAINER` are set by Bicep.
+- Chats saved before this change still open their sources normally.
 
 ## AI Features
 

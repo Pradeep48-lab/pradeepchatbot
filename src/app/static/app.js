@@ -439,21 +439,18 @@ function buildLegacyCitations(context) {
 }
 
 // ---------------------------------------------------------------------------
-// Numbered references: [n] markers in the answer + chips naming each source file and part
+// References: [n] markers in the answer + a list of the original source files
 // ---------------------------------------------------------------------------
 const CITATION_RE = /\[(\d{1,3})\]/g;
 const HAS_CITATION = /\[\d{1,3}\]/;
 
-// "5a813df8-c7eadd70-65-963-56fdfea8a08d.txt" -> "5a813df8-c7eadd…6fdfea8a08d.txt" so the part number stays visible
-function shortName(name, max = 28) {
-    name = name || 'Source';
-    if (name.length <= max) return name;
-    const tail = Math.ceil((max - 1) * 0.45);
-    return name.slice(0, max - 1 - tail) + '…' + name.slice(-tail);
+// Chats saved before references were grouped by file have one section per reference
+function refPassages(ref) {
+    return ref.passages || [{ part: ref.part, content: ref.content || '' }];
 }
 
 function referenceLabel(ref) {
-    return (ref.title || 'Source') + (ref.part ? ` - Part ${ref.part}` : '');
+    return ref.title || 'Source';
 }
 
 function citedNumbers(text) {
@@ -486,7 +483,7 @@ function linkCitations(container, ctx) {
             const marker = el('button', 'cite-marker', String(n));
             marker.type = 'button';
             marker.title = referenceLabel(ref);
-            marker.setAttribute('aria-label', `Reference ${n}: ${referenceLabel(ref)}`);
+            marker.setAttribute('aria-label', `Source ${n}: ${referenceLabel(ref)}`);
             marker.addEventListener('click', () => openReference(ref, ctx));
             frag.appendChild(marker);
         }
@@ -496,47 +493,46 @@ function linkCitations(container, ctx) {
     });
 }
 
+// One row per original file. Clicking opens the whole file with the sections used highlighted.
 function buildReferences(ctx, answerText) {
     const refs = ctx.refs || [];
     if (!refs.length) return null;
     const cited = citedNumbers(answerText);
     const panel = el('div', 'references mt-2 pt-2 border-t border-slate-100');
 
-    const head = el('div', 'flex items-center justify-between gap-2 mb-2');
+    const head = el('div', 'flex items-center justify-between gap-2 mb-1.5');
     const toggle = el('button', 'inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-[#0078d4]');
     toggle.type = 'button';
     toggle.setAttribute('aria-expanded', 'true');
     const caret = icon('fa-solid fa-chevron-down text-[10px] transition-transform');
-    toggle.append(el('span', '', `${refs.length} reference${refs.length === 1 ? '' : 's'}`), caret);
+    toggle.append(el('span', '', `Sources (${refs.length} file${refs.length === 1 ? '' : 's'})`), caret);
     head.append(toggle, el('span', 'text-[11px] text-slate-400', 'AI-generated content may be incorrect'));
 
-    const grid = el('div', 'grid grid-cols-1 sm:grid-cols-2 gap-1.5');
+    const list = el('div', 'flex flex-col');
     refs.forEach(ref => {
         const isCited = cited.has(ref.n);
-        const chip = el('button', 'reference-chip flex items-center gap-2 min-w-0 border border-slate-200 rounded-md px-2 py-1.5 text-left hover:border-[#0078d4] hover:bg-[#f3f9fd]'
+        const row = el('button', 'reference-file flex items-center gap-2.5 min-w-0 w-full text-left rounded-md px-2 py-1.5 hover:bg-[#f3f9fd]'
             + (isCited ? '' : ' opacity-60'));
-        chip.type = 'button';
-        chip.title = referenceLabel(ref) + (isCited ? '' : ' (retrieved, not cited in the answer)');
-        const label = el('span', 'min-w-0 flex text-xs text-[#0078d4]');
-        label.append(el('span', 'truncate', shortName(ref.title)));
-        if (ref.part) label.appendChild(el('span', 'shrink-0 whitespace-pre', ` - Part ${ref.part}`));
-        chip.append(
+        row.type = 'button';
+        row.title = `Open ${referenceLabel(ref)}` + (isCited ? '' : ' (retrieved, not cited in the answer)');
+        row.append(
             el('span', 'shrink-0 w-5 h-5 rounded border border-slate-300 text-[10px] text-slate-600 flex items-center justify-center', String(ref.n)),
-            label,
+            icon('fa-regular fa-file-lines text-slate-400 shrink-0'),
+            el('span', 'truncate text-xs text-[#0078d4] hover:underline', referenceLabel(ref)),
         );
-        chip.addEventListener('click', () => openReference(ref, ctx));
-        grid.appendChild(chip);
+        row.addEventListener('click', () => openReference(ref, ctx));
+        list.appendChild(row);
     });
     toggle.addEventListener('click', () => {
-        const open = grid.classList.toggle('hidden') === false;
+        const open = list.classList.toggle('hidden') === false;
         toggle.setAttribute('aria-expanded', String(open));
         caret.classList.toggle('-rotate-90', !open);
     });
-    panel.append(head, grid);
+    panel.append(head, list);
     return panel;
 }
 
-// Viewer: the passage the answer used, plus the full source file from the storage account
+// Viewer: the original source file from the storage account, with the sections the answer used highlighted
 let viewer = null;
 function getViewer() {
     if (viewer) return viewer;
@@ -553,29 +549,24 @@ function getViewer() {
     title.id = 'viewerTitle';
     const subtitle = el('div', 'text-xs text-slate-500');
     titles.append(title, subtitle);
+    const downloadBtn = el('button', 'shrink-0 text-xs border border-slate-300 bg-white hover:bg-slate-100 rounded px-2.5 py-1 disabled:opacity-40');
+    downloadBtn.type = 'button';
+    downloadBtn.append(icon('fa-solid fa-download mr-1'), document.createTextNode('Download'));
     const close = el('button', 'shrink-0 p-1.5 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100');
     close.type = 'button';
     close.setAttribute('aria-label', 'Close');
     close.appendChild(icon('fa-solid fa-xmark'));
-    header.append(num, titles, close);
+    header.append(num, titles, downloadBtn, close);
 
-    const toolbar = el('div', 'flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50 flex-wrap');
-    const mode = el('span', 'text-xs text-slate-600 flex-1');
-    const passageBtn = el('button', 'text-xs border border-slate-300 bg-white hover:bg-slate-100 rounded px-2.5 py-1', 'Show passage');
-    const fullBtn = el('button', 'text-xs border border-[#0078d4] text-[#0078d4] bg-white hover:bg-[#e5f1fb] rounded px-2.5 py-1 disabled:opacity-40', 'Open full file');
-    const downloadBtn = el('button', 'text-xs border border-slate-300 bg-white hover:bg-slate-100 rounded px-2.5 py-1 disabled:opacity-40');
-    downloadBtn.append(icon('fa-solid fa-download mr-1'), document.createTextNode('Download'));
-    [passageBtn, fullBtn, downloadBtn].forEach(b => { b.type = 'button'; });
-    toolbar.append(mode, passageBtn, fullBtn, downloadBtn);
-
-    const body = el('div', 'overflow-auto px-4 py-3');
+    const body = el('div', 'overflow-auto px-4 py-3 outline-none');
+    body.tabIndex = -1;
     const pre = el('pre', 'viewer-text whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-slate-800');
     body.appendChild(pre);
-    dialog.append(header, toolbar, body);
+    dialog.append(header, body);
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
 
-    viewer = { overlay, dialog, num, title, subtitle, mode, passageBtn, fullBtn, downloadBtn, body, pre, current: null, lastFocus: null };
+    viewer = { overlay, num, title, subtitle, downloadBtn, body, pre, current: null, lastFocus: null };
     const hide = () => {
         overlay.classList.add('hidden');
         if (viewer.lastFocus) viewer.lastFocus.focus();
@@ -583,8 +574,6 @@ function getViewer() {
     close.addEventListener('click', hide);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) hide(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !overlay.classList.contains('hidden')) hide(); });
-    passageBtn.addEventListener('click', () => showPassage());
-    fullBtn.addEventListener('click', () => showFullFile());
     downloadBtn.addEventListener('click', () => downloadSource());
     return viewer;
 }
@@ -598,64 +587,92 @@ function openReference(ref, ctx) {
     v.current = { ref, ctx };
     v.lastFocus = document.activeElement;
     v.num.textContent = String(ref.n);
-    v.title.textContent = ref.title || 'Source';
-    v.subtitle.textContent = ref.part ? `Part ${ref.part} of the file` : 'Source passage';
+    v.title.textContent = referenceLabel(ref);
     const ready = Boolean(ctx.turnId && ctx.sessionId);
-    v.fullBtn.disabled = v.downloadBtn.disabled = !ready;
-    v.fullBtn.title = v.downloadBtn.title = ready ? '' : 'Available once the answer has finished';
-    showPassage();
+    v.downloadBtn.disabled = !ready;
+    v.downloadBtn.title = ready ? '' : 'Available once the answer has finished';
     v.overlay.classList.remove('hidden');
-    v.fullBtn.disabled ? v.passageBtn.focus() : v.fullBtn.focus();
+    if (ready) {
+        showFullFile();
+    } else {
+        showSections('Showing the sections used. The full file opens once the answer has finished.');
+    }
+    v.downloadBtn.disabled ? v.body.focus() : v.downloadBtn.focus();
 }
 
-function showPassage() {
+// Fallback: just the sections of the file that the answer was based on
+function showSections(note) {
     const v = getViewer();
     const { ref } = v.current;
-    v.mode.textContent = 'Passage the answer was based on';
-    v.passageBtn.classList.add('hidden');
-    v.pre.textContent = ref.content || '(no text)';
+    v.subtitle.textContent = note;
+    v.pre.innerHTML = '';
+    refPassages(ref).forEach((p, i) => {
+        if (i) v.pre.appendChild(document.createTextNode('\n\n…\n\n'));
+        v.pre.appendChild(el('mark', 'viewer-highlight', p.content || ''));
+    });
     v.body.scrollTop = 0;
 }
 
 async function showFullFile() {
     const v = getViewer();
     const { ref, ctx } = v.current;
-    v.mode.textContent = 'Loading the full file...';
+    v.subtitle.textContent = 'Opening the file...';
+    v.pre.textContent = '';
     try {
         const res = await fetch(sourceUrl(ctx, ref, false), { cache: 'no-store' });
+        if (v.current.ref !== ref) return;              // user opened another file meanwhile
         const type = res.headers.get('content-type') || '';
         if (!res.ok) {
             let detail = `HTTP ${res.status}`;
             try { detail = (await res.json()).detail || detail; } catch (_) { /* not JSON */ }
-            v.mode.textContent = 'Could not open the file: ' + detail;
+            showSections(`Couldn't open the full file (${detail}). Showing the sections used instead.`);
             return;
         }
-        if (!type.includes('application/json')) {   // not a text file: offer the download instead
-            v.mode.textContent = "This file type can't be previewed here. Use Download to open it.";
+        if (!type.includes('application/json')) {      // not a text file: offer the download
+            showSections("This file type can't be previewed here; use Download to open it. Showing the sections used.");
             return;
         }
         const data = await res.json();
-        if (v.current.ref !== ref) return;          // user opened another reference meanwhile
-        v.mode.textContent = `Full file: ${data.path} (${Math.max(1, Math.round(data.size / 1024))} KB). The passage used is highlighted.`;
-        v.passageBtn.classList.remove('hidden');
-        // Highlight the passage inside the full text (DOM text nodes only, no HTML)
-        const full = data.text || '';
-        const probe = (ref.content || '').trim().slice(0, 200);
-        const at = probe ? full.indexOf(probe) : -1;
-        v.pre.innerHTML = '';
-        if (at >= 0) {
-            const len = Math.min((ref.content || '').trim().length, full.length - at);
-            const mark = el('mark', 'viewer-highlight', full.slice(at, at + len));
-            v.pre.append(document.createTextNode(full.slice(0, at)), mark, document.createTextNode(full.slice(at + len)));
-            requestAnimationFrame(() => mark.scrollIntoView({ block: 'center' }));
-        } else {
-            v.pre.textContent = full;
-            v.body.scrollTop = 0;
-        }
+        if (v.current.ref !== ref) return;
+        renderHighlighted(data.text || '', refPassages(ref));
+        const count = refPassages(ref).length;
+        v.subtitle.textContent = `${data.path} · ${Math.max(1, Math.round(data.size / 1024))} KB · `
+            + `${count} section${count === 1 ? '' : 's'} used in the answer ${count === 1 ? 'is' : 'are'} highlighted`;
     } catch (err) {
         console.error('Opening source failed:', err);
-        v.mode.textContent = 'Network error while opening the file.';
+        showSections('Network error while opening the file. Showing the sections used instead.');
     }
+}
+
+// Write the full text with each section used wrapped in <mark> (DOM text nodes only, no HTML)
+function renderHighlighted(full, passages) {
+    const v = getViewer();
+    const ranges = [];
+    passages.forEach(p => {
+        const content = (p.content || '').trim();
+        const probe = content.slice(0, 200);
+        const at = probe ? full.indexOf(probe) : -1;
+        if (at >= 0) ranges.push([at, Math.min(at + content.length, full.length)]);
+    });
+    ranges.sort((a, b) => a[0] - b[0]);
+    const merged = [];                                  // sections overlap, so merge them
+    ranges.forEach(r => {
+        const lastRange = merged[merged.length - 1];
+        if (lastRange && r[0] <= lastRange[1]) lastRange[1] = Math.max(lastRange[1], r[1]);
+        else merged.push(r.slice());
+    });
+    v.pre.innerHTML = '';
+    let pos = 0, firstMark = null;
+    merged.forEach(([a, b]) => {
+        v.pre.appendChild(document.createTextNode(full.slice(pos, a)));
+        const mark = el('mark', 'viewer-highlight', full.slice(a, b));
+        v.pre.appendChild(mark);
+        if (!firstMark) firstMark = mark;
+        pos = b;
+    });
+    v.pre.appendChild(document.createTextNode(full.slice(pos)));
+    if (firstMark) requestAnimationFrame(() => firstMark.scrollIntoView({ block: 'center' }));
+    else v.body.scrollTop = 0;
 }
 
 async function downloadSource() {
@@ -666,7 +683,7 @@ async function downloadSource() {
         if (!res.ok) {
             let detail = `HTTP ${res.status}`;
             try { detail = (await res.json()).detail || detail; } catch (_) { /* not JSON */ }
-            v.mode.textContent = 'Could not download the file: ' + detail;
+            v.subtitle.textContent = 'Could not download the file: ' + detail;
             return;
         }
         const blob = await res.blob();
@@ -680,7 +697,7 @@ async function downloadSource() {
         setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) {
         console.error('Download failed:', err);
-        v.mode.textContent = 'Network error while downloading the file.';
+        v.subtitle.textContent = 'Network error while downloading the file.';
     }
 }
 

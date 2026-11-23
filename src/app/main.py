@@ -65,7 +65,9 @@ AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLO
 AZURE_SEARCH_ENDPOINT = os.environ.get("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_INDEX = os.environ.get("AZURE_SEARCH_INDEX", "documents-index")
 AZURE_SEARCH_SEMANTIC_CONFIG = os.environ.get("AZURE_SEARCH_SEMANTIC_CONFIG", "default")
-SEARCH_TOP = int(os.environ.get("SEARCH_TOP", "8"))   # passages retrieved (= max references per answer)
+SEARCH_TOP = int(os.environ.get("SEARCH_TOP", "8"))   # passages sent to the model per question
+SEARCH_CANDIDATES = int(os.environ.get("SEARCH_CANDIDATES", "20"))   # ranked results to choose those from
+MAX_PARTS_PER_FILE = int(os.environ.get("MAX_PARTS_PER_FILE", "3"))  # so one large file can't fill every slot
 
 AZURE_COSMOS_ENDPOINT = os.environ.get("AZURE_COSMOS_ENDPOINT")
 AZURE_COSMOS_DB_NAME = os.environ.get("AZURE_COSMOS_DB_NAME", "chatdb")
@@ -226,7 +228,7 @@ def search_internal_kb(query: str) -> tuple[list[dict], bool]:
             fields="content_vector"
         )],
         select=["chunk_id", "parent_id", "title", "content"],
-        top=SEARCH_TOP,
+        top=max(SEARCH_CANDIDATES, SEARCH_TOP),
     )
     try:
         results = list(search_client.search(
@@ -242,14 +244,37 @@ def search_internal_kb(query: str) -> tuple[list[dict], bool]:
         results = list(search_client.search(**common))
         semantic_used = False
 
-    docs = [{
-        "title": doc["title"],
-        "content": doc["content"],
-        "part": chunk_part(doc.get("chunk_id")),
-        "blob": blob_path_from_parent_id(doc.get("parent_id"), doc["title"]),
-        "score": doc.get("@search.reranker_score") if semantic_used else None,
-    } for doc in results]
+    # Best results first, at most MAX_PARTS_PER_FILE sections from any one file
+    docs, per_file = [], {}
+    for doc in results:
+        blob = blob_path_from_parent_id(doc.get("parent_id"), doc["title"])
+        if per_file.get(blob, 0) >= MAX_PARTS_PER_FILE:
+            continue
+        per_file[blob] = per_file.get(blob, 0) + 1
+        docs.append({
+            "title": doc["title"],
+            "content": doc["content"],
+            "part": chunk_part(doc.get("chunk_id")),
+            "blob": blob,
+            "score": doc.get("@search.reranker_score") if semantic_used else None,
+        })
+        if len(docs) >= SEARCH_TOP:
+            break
     return docs, semantic_used
+
+
+def group_by_file(docs: list[dict]) -> list[dict]:
+    """One reference per original file (numbered in order of best match), holding the
+    sections of that file the answer may use, in file order."""
+    files: dict[str, dict] = {}
+    for d in docs:
+        f = files.setdefault(d["blob"], {"title": d["title"], "blob": d["blob"], "passages": []})
+        f["passages"].append({"part": d.get("part"), "content": d["content"]})
+    out = []
+    for n, f in enumerate(files.values(), start=1):
+        f["passages"].sort(key=lambda p: (p["part"] is None, p["part"] or 0))
+        out.append({"n": n, **f})
+    return out
 
 
 def chunk_part(chunk_id: str | None) -> int | None:
@@ -319,8 +344,8 @@ RULES
   plus any screenshots or <attachments> the engineer provided.
 - The sources are our own documents and closed support tickets. When a closed ticket matches,
   say how it was resolved.
-- CITE YOUR SOURCES: each <source> has a number (id). After every sentence, bullet or step that uses
-  a source, add its number in square brackets, e.g. [2] or [1][3]. Only use numbers that appear in
+- CITE YOUR SOURCES: each <source> is one file and has a number (id). After every sentence, bullet or
+  step that uses a source, add its number in square brackets, e.g. [2] or [1][3]. Only use numbers that appear in
   <sources>; never invent one. Don't put numbers on information from screenshots or attachments.
 - When a screenshot or log is attached, first state the exact error you see in it, then explain the fix.
 - If the sources disagree, say so and explain both.
@@ -344,13 +369,11 @@ FORMAT YOUR ANSWER IN MARKDOWN
 - Do not add a "Sources" or "References" section or suggested follow-up questions; both are shown separately."""
 
 
-def build_sources_block(docs: list[dict]) -> str:
+def build_sources_block(files: list[dict]) -> str:
     parts = []
-    for n, doc in enumerate(docs, start=1):
-        part = f' part="{doc["part"]}"' if doc.get("part") else ""
-        parts.append(
-            f'<source id="{n}" file="{neutralise_tags(doc["title"])}"{part}>\n{neutralise_tags(doc["content"])}\n</source>'
-        )
+    for f in files:
+        sections = "\n\n".join(neutralise_tags(p["content"]) for p in f["passages"])
+        parts.append(f'<source id="{f["n"]}" file="{neutralise_tags(f["title"])}">\n{sections}\n</source>')
     return "<sources>\n" + ("\n".join(parts) if parts else "(no matching sources found)") + "\n</sources>"
 
 
@@ -448,17 +471,14 @@ async def prepare_turn(payload: ChatRequest, request: Request) -> Turn:
         turn.internal_docs = internal_docs
         turn.confidence = assess_confidence(internal_docs, semantic_used)
         turn.tickets = similar_tickets(internal_docs)
-        # Numbered references shown under the answer; the numbers match the [n] markers the model writes
-        turn.references = [
-            {"n": n, "title": d["title"], "part": d.get("part"), "content": d["content"], "blob": d.get("blob") or d["title"]}
-            for n, d in enumerate(internal_docs, start=1)
-        ]
+        # One numbered reference per original file; the numbers match the [n] markers the model writes
+        turn.references = group_by_file(internal_docs)
 
         # Rules stay in the system message; retrieved text and attachments go in the
         # user message as clearly delimited, untrusted data.
         guidance = CONFIDENCE_GUIDANCE.get(turn.confidence["level"], "")
         user_text_block = "\n\n".join(p for p in [
-            build_sources_block(internal_docs),
+            build_sources_block(turn.references),
             attachments_block(texts),
             guidance,
             f"Question: {question}",
@@ -491,8 +511,13 @@ async def shield_check(user_text: str, docs: list[dict]) -> tuple[bool, set, str
 
 
 def public_references(references: list | None) -> list:
-    """References as sent to the browser (without the internal blob path)."""
-    return [{k: r.get(k) for k in ("n", "title", "part", "content")} for r in (references or [])]
+    """References as sent to the browser (without the internal blob path).
+    Chats saved before references were grouped by file have one section per reference."""
+    out = []
+    for r in references or []:
+        passages = r.get("passages") or [{"part": r.get("part"), "content": r.get("content", "")}]
+        out.append({"n": r.get("n"), "title": r.get("title"), "passages": passages})
+    return out
 
 
 def save_turn(turn: Turn, answer: str) -> str:
