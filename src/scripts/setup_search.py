@@ -1,5 +1,6 @@
 import os
 from datetime import datetime, time, timedelta, timezone
+from azure.core.exceptions import ResourceExistsError
 from azure.identity import DefaultAzureCredential
 from azure.search.documents.indexes import SearchIndexClient, SearchIndexerClient
 from azure.search.documents.indexes.models import (
@@ -184,8 +185,14 @@ def setup_search_pipeline():
     )
     indexer_client.create_or_update_indexer(indexer)
 
-    # Trigger an immediate run once setup finishes
-    indexer_client.run_indexer("document-indexer")
+    # Trigger an immediate run once setup finishes. Azure already starts a run when the indexer is
+    # first created (or while the scheduled run is going), and only one run can happen at a time,
+    # so "already running" is fine: the new files are picked up by that run.
+    try:
+        indexer_client.run_indexer("document-indexer")
+        print("   Indexer run started.")
+    except ResourceExistsError:
+        print("   Indexer is already running (started automatically); it will pick up the files. Nothing else to do.")
     print(f"Setup complete! Indexer scheduled daily at 12:00 AM IST (next run: {next_midnight_utc.isoformat()}).")
 
 
