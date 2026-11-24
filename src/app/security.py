@@ -82,8 +82,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         for name, value in SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
-        # API responses contain private chat data: never cache them
-        if not request.url.path.startswith("/static/"):
+        if request.url.path.startswith("/static/"):
+            # Scripts and styles: the browser may keep a copy but must check with the server on every
+            # page load (a cheap 304 when unchanged), so a new deployment shows up immediately.
+            response.headers["Cache-Control"] = "no-cache"
+        else:
+            # The page and API responses contain private chat data: never cache them
             response.headers["Cache-Control"] = "no-store"
         return response
 
