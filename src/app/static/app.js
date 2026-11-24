@@ -390,26 +390,6 @@ function appendUserBubble(text, attachments) {
     return wrapper;
 }
 
-const CONFIDENCE_STYLES = {
-    high:       { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: 'fa-solid fa-circle-check' },
-    medium:     { cls: 'bg-amber-50 text-amber-700 border-amber-200',       icon: 'fa-solid fa-circle-half-stroke' },
-    low:        { cls: 'bg-orange-50 text-orange-700 border-orange-200',    icon: 'fa-solid fa-triangle-exclamation' },
-    none:       { cls: 'bg-red-50 text-red-700 border-red-200',             icon: 'fa-solid fa-circle-xmark' },
-    unscored:   { cls: 'bg-slate-50 text-slate-600 border-slate-200',       icon: 'fa-solid fa-circle-info' },
-};
-
-function buildConfidenceBadge(confidence) {
-    if (!confidence || !confidence.level) return null;
-    const style = CONFIDENCE_STYLES[confidence.level] || CONFIDENCE_STYLES.unscored;
-    const badge = el('div', `confidence-badge inline-flex items-center gap-1.5 text-[11px] font-medium border rounded-full px-2.5 py-0.5 ${style.cls}`);
-    badge.appendChild(icon(style.icon));
-    badge.appendChild(el('span', '', confidence.label || confidence.level));
-    if (typeof confidence.best_score === 'number') {
-        badge.title = `Best relevance score: ${confidence.best_score} of 4`;
-    }
-    return badge;
-}
-
 function buildTicketsPanel(tickets) {
     if (!tickets || !tickets.length) return null;
     const panel = el('div', 'similar-tickets mt-2 pt-2 border-t border-slate-100 flex flex-col gap-2');
@@ -532,9 +512,10 @@ function linkCitations(container, ctx) {
 
 // One row per original file. Clicking opens the whole file with the sections used highlighted.
 function buildReferences(ctx, answerText) {
-    const refs = ctx.refs || [];
-    if (!refs.length) return null;
+    // Only the files the answer actually cites (older chats also stored files that weren't used)
     const cited = citedFiles(answerText, ctx);
+    const refs = (ctx.refs || []).filter(r => cited.has(r.n));
+    if (!refs.length) return null;
     const panel = el('div', 'references mt-2 pt-2 border-t border-slate-100');
 
     const head = el('div', 'flex items-center justify-between gap-2 mb-1.5');
@@ -751,28 +732,7 @@ async function postJSON(url, body) {
     return data;
 }
 
-function copyText(text, button) {
-    const done = () => {
-        const original = button.innerHTML;
-        button.textContent = 'Copied';
-        setTimeout(() => { button.innerHTML = original; }, 1500);
-    };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
-    } else {
-        fallbackCopy(text, done);
-    }
-}
-
-function fallbackCopy(text, done) {
-    const area = el('textarea');
-    area.value = text;
-    document.body.appendChild(area);
-    area.select();
-    try { document.execCommand('copy'); done(); } finally { area.remove(); }
-}
-
-// Thumbs up / down + "Draft customer reply" under each answer
+// Thumbs up / down under each answer
 function buildActions(sessionId, turnId, existingFeedback) {
     const bar = el('div', 'answer-actions mt-2 pt-2 border-t border-slate-100 flex flex-col gap-2');
     const row = el('div', 'flex items-center gap-1 flex-wrap');
@@ -826,59 +786,9 @@ function buildActions(sessionId, turnId, existingFeedback) {
         if (await send('down', comment.value.trim())) commentBox.classList.add('hidden');
     });
 
-    const draftBtn = el('button', 'ml-auto inline-flex items-center gap-1.5 text-xs text-slate-600 hover:text-[#0078d4] border border-slate-200 hover:border-[#0078d4] rounded-full px-3 py-1');
-    draftBtn.type = 'button';
-    draftBtn.appendChild(icon('fa-regular fa-envelope'));
-    draftBtn.appendChild(el('span', '', 'Draft customer reply'));
 
-    const draftPanel = el('div', 'draft-panel hidden rounded-lg border border-slate-200 bg-slate-50 p-3 flex flex-col gap-2');
-    const nameRow = el('div', 'flex items-center gap-2');
-    const nameInput = el('input', 'flex-1 text-xs border border-slate-300 rounded-md px-2 py-1 outline-none focus:ring-2 focus:ring-[#0078d4]');
-    nameInput.type = 'text';
-    nameInput.maxLength = 80;
-    nameInput.placeholder = 'Customer name (optional)';
-    const regen = el('button', 'text-xs border border-slate-300 hover:bg-white rounded px-2 py-1 text-slate-700', 'Regenerate');
-    regen.type = 'button';
-    nameRow.append(nameInput, regen);
-    const draftText = el('textarea', 'w-full text-xs leading-relaxed border border-slate-300 rounded-md p-2 bg-white outline-none focus:ring-2 focus:ring-[#0078d4]');
-    draftText.rows = 10;
-    draftText.setAttribute('aria-label', 'Customer reply draft (editable)');
-    const draftFooter = el('div', 'flex items-center gap-2');
-    const draftStatus = el('span', 'text-[11px] text-slate-500 flex-1', 'Review and edit before sending. Internal details are removed automatically, but always double-check.');
-    const copyBtn = el('button', 'text-xs bg-[#0078d4] hover:bg-[#106ebe] text-white rounded px-3 py-1', 'Copy');
-    copyBtn.type = 'button';
-    const closeBtn = el('button', 'text-xs text-slate-500 hover:text-slate-800 px-2 py-1', 'Close');
-    closeBtn.type = 'button';
-    draftFooter.append(draftStatus, copyBtn, closeBtn);
-    draftPanel.append(nameRow, draftText, draftFooter);
-
-    async function generateDraft() {
-        draftPanel.classList.remove('hidden');
-        draftText.value = 'Drafting a customer-ready reply...';
-        draftText.disabled = true;
-        regen.disabled = true;
-        try {
-            const data = await postJSON('/draft-reply', {
-                session_id: sessionId, turn_id: turnId, customer_name: nameInput.value.trim() || null,
-            });
-            draftText.value = data.draft || '';
-        } catch (err) {
-            draftText.value = 'Could not draft a reply: ' + err.message;
-        } finally {
-            draftText.disabled = false;
-            regen.disabled = false;
-        }
-    }
-    draftBtn.addEventListener('click', () => {
-        if (draftPanel.classList.contains('hidden') || !draftText.value) generateDraft();
-        else draftPanel.classList.add('hidden');
-    });
-    regen.addEventListener('click', generateDraft);
-    copyBtn.addEventListener('click', () => copyText(draftText.value, copyBtn));
-    closeBtn.addEventListener('click', () => draftPanel.classList.add('hidden'));
-
-    row.append(up, down, thanks, draftBtn);
-    bar.append(commentBox, draftPanel);
+    row.append(up, down, thanks);
+    bar.append(commentBox);
     return bar;
 }
 
@@ -932,8 +842,6 @@ function createAssistantBubble() {
         applyMeta(meta) {
             setReferences(ctx, meta.references || []);
             header.innerHTML = '';
-            const badge = buildConfidenceBadge(meta.confidence);
-            if (badge) header.appendChild(badge);
             if (meta.search_query) {
                 const searched = el('div', 'text-[11px] text-slate-400 italic truncate');
                 searched.textContent = 'Searched for: ' + meta.search_query;
@@ -990,6 +898,14 @@ function createAssistantBubble() {
 // ---------------------------------------------------------------------------
 // Sending a question (streamed answer)
 // ---------------------------------------------------------------------------
+// While streaming, hide the model's internal "not found" signal; the server removes it from the final text
+const NO_ANSWER_MARKER = 'NO_ANSWER_IN_SOURCES';
+function visibleText(text) {
+    const trimmed = text.trimStart();
+    if (NO_ANSWER_MARKER.startsWith(trimmed)) return '';          // marker still arriving
+    return text.replace(NO_ANSWER_MARKER, '').replace(/^[\s:]+/, '');
+}
+
 async function sendMessage() {
     const message = userInput.value.trim();
     const attachments = pendingAttachments.slice();
@@ -1042,10 +958,16 @@ async function sendMessage() {
                     break;
                 case 'delta':
                     text += event.text;
-                    bubble.streamText(text);
+                    bubble.streamText(visibleText(text));
                     break;
                 case 'done':
-                    bubble.setText(event.content || text);
+                    // The server sends the final text with only the sources it cites, and the matching badge
+                    if (event.references) {
+                        meta = { ...meta, references: event.references, confidence: event.confidence,
+                                 similar_tickets: event.similar_tickets };
+                        bubble.applyMeta(meta);
+                    }
+                    bubble.setText(event.content || visibleText(text));
                     bubble.finish(event.turn_id, message || 'Attached files', { ...meta, session_id: requestSessionId });
                     unlock();
                     loadHistory();
