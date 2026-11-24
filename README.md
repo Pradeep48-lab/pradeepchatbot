@@ -32,7 +32,7 @@ A Zero Trust, keyless Retrieval-Augmented Generation (RAG) chatbot hosted on Mic
 │   └── modules/
 │       ├── appservice.bicep    # Linux Web App, Oryx settings, Easy Auth (authsettingsV2)
 │       ├── cosmos.bicep        # Cosmos DB account, database, container, data-plane RBAC
-│       ├── openai.bicep        # Azure OpenAI account + chat & embedding deployments
+│       ├── openai.bicep        # Azure OpenAI account + chat, chat-mini (fast) & embedding deployments
 │       ├── roles.bicep         # Automated Managed Identity & SP RBAC assignments
 │       ├── search.bicep        # Azure AI Search service with Managed Identity
 │       └── storage.bicep       # Storage account + documents blob container
@@ -41,7 +41,10 @@ A Zero Trust, keyless Retrieval-Augmented Generation (RAG) chatbot hosted on Mic
 │   │   ├── static/
 │   │   │   ├── index.html      # Branded chat UI with grouped history & session switching
 │   │   │   └── logo.png        # Company logo served at /static/logo.png
-│   │   ├── main.py             # FastAPI RAG backend (/chat, /history, /history/{session_id})
+│   │   ├── main.py             # FastAPI RAG backend (/chat, /chat/stream, /history, /source)
+│   │   ├── assistant.py        # Attachments, query rewrite, memory summaries, source details
+│   │   ├── inventory.py        # Knowledge-base questions (recent / how many / indexed)
+│   │   ├── security.py         # Rate limits, security headers, Prompt Shields
 │   │   └── requirements.txt    # Pinned stable Python dependencies
 │   └── scripts/
 │       └── setup_search.py     # Integrated Vectorization & daily 12:00 AM IST indexer setup
@@ -148,10 +151,11 @@ Each answer cites the original files it used:
 - **"Sources (N files)" list under the answer**: only the files the answer actually cites, one row per original file name (e.g. `2310060040008914.txt`), numbered 1, 2, 3 in the order the answer first uses them. Files that were searched but not used are not shown. The list can be collapsed.
 - **When the answer isn't in the documents**, the model starts its reply with an internal `NO_ANSWER_IN_SOURCES` signal (never shown to users). The app then removes any citation numbers and shows **no sources**.
 - **Click a file (or a marker)** to open the whole original file from the storage account, with every section the answer used highlighted; **Download** saves it. PDFs and other non-text files are downloaded, never rendered in the page.
-- **More variety per answer:** search takes the 20 best-ranked sections, then keeps at most `MAX_PARTS_PER_FILE` (3) from any one file, up to `SEARCH_TOP` (8) sections in total, so one very large file can't crowd out other tickets. (Files are split into ~2,000-character sections by the indexer; large combined exports are best split into one file per ticket.)
+- **More variety per answer:** search takes the 20 best-ranked sections, then keeps at most `MAX_PARTS_PER_FILE` (3) from any one file, up to `SEARCH_TOP` (5) sections in total, so one very large file can't crowd out other tickets. (Files are split into ~2,000-character sections by the indexer; large combined exports are best split into one file per ticket.)
 - **Security:** the browser never sends a file path. `GET /source/{session}/{answer}/{n}` looks up source *n* on the user's own saved answer and reads that blob with the App Service's managed identity, which has **Storage Blob Data Reader on the `documents` container only**. Files over `MAX_SOURCE_BYTES` (5 MB) aren't opened.
 - **Only real matches become sources:** sections with a semantic ranker score below `MIN_RERANKER_SCORE` (1.5 of 4) are dropped before the model sees them, and the model is told to cite only the file(s) each statement was taken from.
-- **Settings:** `SEARCH_TOP` (8), `SEARCH_CANDIDATES` (20), `MAX_PARTS_PER_FILE` (3), `MIN_RERANKER_SCORE` (1.5; 0 turns the filter off). `AZURE_STORAGE_ACCOUNT_URL` / `AZURE_STORAGE_CONTAINER` are set by Bicep.
+- **Source details:** under each file name a grey line shows the type (**Ticket**, **Runbook** or **Document**, from the file name), and the product and date when the file has lines like `Product: VPN Gateway` and `Date closed: 14 Mar 2026` (also `Closed on`, `Resolved on`, `Last updated`). The model sees the same details and prefers the most recent source when two disagree.
+- **Settings:** `SEARCH_TOP` (5), `SEARCH_CANDIDATES` (20), `MAX_PARTS_PER_FILE` (3), `MIN_RERANKER_SCORE` (1.5; 0 turns the filter off). `AZURE_STORAGE_ACCOUNT_URL` / `AZURE_STORAGE_CONTAINER` are set by Bicep.
 - Chats saved before this change still open their sources normally.
 
 ## AI Features
@@ -159,8 +163,14 @@ Each answer cites the original files it used:
 | Feature | How it works | Settings |
 | :--- | :--- | :--- |
 | **Hybrid search + semantic ranker** | Every question runs keyword + vector search together (exact error codes and ticket numbers *and* meaning), then the semantic ranker re-orders the top results and scores them 0–4. Falls back to plain hybrid search if the ranker isn't enabled. | `semanticSearch` Bicep param (`standard` default; `free` = 1,000 queries/month). `SEARCH_TOP` (5). `setup_search.py` adds the `default` semantic configuration (no re-index needed). |
-| **Follow-up understanding** | For follow-ups ("how do I verify that?") and attachments, the model first rewrites the message into a standalone search query using the last few turns. The UI shows "Searched for: …". | Runs only when there is history or an attachment. |
-| **Streaming answers** | `POST /chat/stream` returns newline-delimited JSON events (`meta`, `delta`, `done`, `suggestions`, or `blocked`/`error`); the UI renders text as it arrives. `/chat` still returns one JSON response. | `MAX_ANSWER_TOKENS` (1500) |
+| **Follow-up understanding** | For follow-ups ("how do I verify that?") and attachments, the fast model (gpt-4.1-mini) first rewrites the message into a standalone search query using the last few turns. | Runs only when there is history or an attachment. |
+| **Fast helper model** | Follow-up rewriting, memory summaries and the knowledge-base question check use the `chat-mini` deployment (gpt-4.1-mini, 50K TPM, added by Bicep). Answers still come from gpt-4.1. If `chat-mini` doesn't exist yet, the app uses `chat` instead and tries `chat-mini` again after 10 minutes. | `AZURE_OPENAI_FAST_DEPLOYMENT` (`chat-mini`) |
+| **Faster answers** | Answers are kept short (under ~200 words, `MAX_ANSWER_TOKENS` 900), 5 sections go to the model instead of 8, and the Prompt Shields check runs *while* the answer starts generating. Nothing is shown until the check passes; on a jailbreak the turn is blocked, and if a document is flagged the answer is regenerated without it. Every answer logs `Timing ms: history=… rewrite=… search=… shields=… first_text=… total=…` to App Service logs. | `SEARCH_TOP` (5), `MAX_ANSWER_TOKENS` (900) |
+| **Support answer layout** | Troubleshooting answers use **Likely cause → Fix → Verify → Escalate if**, and end with **Resolved before in ticket &lt;number&gt;** when a cited closed ticket matches. How-to questions get a short direct answer with steps. | — |
+| **Clarifying questions** | When a question is too vague and the documents give different fixes depending on missing details (e.g. which VPN type, the exact error), the assistant asks one short question instead of guessing. No sources are shown for it. It never asks twice in a row. | — |
+| **Long conversations** | The last 4 turns go to the model word for word; older turns are folded into short running notes by the fast model after each answer (saved as `memory_summary` on the latest turn in Cosmos DB), so long chats keep their context without getting slower. | `MAX_HISTORY_TURNS` (4) |
+| **Questions about the knowledge base** | Questions like *"what are the recent tickets uploaded?"*, *"how many VPN tickets were created in the last month?"*, *"give me the details of the tickets closed this month"* or *"is everything indexed?"* are answered from the real file list in the storage account and the search index, not from search passages. The answer is a count plus a table: file, date, product, and for tickets the **Issue** and **Resolution** lines (otherwise an Indexed column). Files not indexed yet are listed under the table. **Dates:** "closed" questions use each ticket's `Date closed:` / `Closed on:` / `Resolved on:` line, "created" questions use `Created:` / `Opened:` / `Reported:`, and upload questions use the upload date. A ticket without the needed line falls back to its upload date and is marked "(uploaded)". Only files uploaded since the start of the period are opened (a ticket is uploaded after it's closed), and only their first 16 KB is read, in parallel. "This month" means since the 1st. A file matches a topic when its name or indexed text contains the keyword. The file list is cached for 5 minutes. This uses the roles the app already has (Storage Blob Data Reader on `documents`, Search Index Data Reader), so there's nothing new to grant. | `INVENTORY_CACHE_SECONDS` (300), `INVENTORY_MAX_ROWS` (20), `INVENTORY_MAX_READS` (500), `INVENTORY_MAX_FILES` (20,000), `DATE_DAY_FIRST` (`true`: 03/04/2026 = 3 April) |
+| **Streaming answers** | `POST /chat/stream` returns newline-delimited JSON events (`meta`, `delta`, `done`, `suggestions`, or `blocked`/`error`); the UI renders text as it arrives. `/chat` still returns one JSON response. | `MAX_ANSWER_TOKENS` (900) |
 | **Screenshots and log files** | Paperclip, paste (Ctrl+V a screenshot) or drag and drop. Images are resized in the browser, checked server-side (type, real file signature, size), read by gpt-4.1 and used to find the error code for search. Text/log files are added as delimited, untrusted data. Only file *names* are saved in history. | `MAX_ATTACHMENTS` (3), `MAX_IMAGE_BYTES` (4 MB), `MAX_TEXT_ATTACHMENT_CHARS` (20,000) |
 | **Similar closed tickets** | Knowledge-base results whose file name looks like a ticket are shown as cards with the extracted **Resolution** line. Name ticket files like `ticket-1234-closed.md`, `INC0012345 - VPN drops.pdf` or `Case 5512.docx`, and include a `Resolution:` line. | `TICKET_TITLE_PATTERN` (regex) |
 | **Confidence (internal)** | The best semantic ranker score is still used to tell the model how well the documents match, so weak matches get a cautious answer. No badge is shown to users. | `CONFIDENCE_HIGH_SCORE`, `CONFIDENCE_MEDIUM_SCORE` |
@@ -168,9 +178,9 @@ Each answer cites the original files it used:
 | **Draft customer reply** | **Off by default** (no button, and `/draft-reply` returns 404). When enabled, turns a saved answer into a customer-ready email with internal details removed. | `ENABLE_DRAFT_REPLY` (`false`; set to `true` to turn on) |
 | **Feedback** | Removed from the UI (no thumbs up/down). The `/feedback` API still exists for a future re-enable. | — |
 
-**Finding knowledge gaps:** in Cosmos DB Data Explorer, query
-`SELECT c.user_message, c.feedback.comment, c.confidence.level FROM c WHERE c.feedback.rating = "down" OR c.confidence.level IN ("low", "none")`
-to see which questions need new or better documents in the storage container.
+**Finding knowledge gaps:** every question the documents couldn't answer is saved with `not_found: true` and logged as `Knowledge gap: question=… searched=…`. In Cosmos DB Data Explorer, query
+`SELECT c.timestamp, c.user_message, c.search_query FROM c WHERE c.not_found = true ORDER BY c._ts DESC`
+to see which topics need new documents in the storage container. `WHERE c.needs_clarification = true` shows questions that were too vague.
 
 **Model API version:** the app now uses Azure OpenAI API version `2024-10-21` (GA; needed for screenshots). Override with the `AZURE_OPENAI_API_VERSION` app setting.
 

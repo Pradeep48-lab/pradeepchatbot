@@ -511,6 +511,15 @@ function linkCitations(container, ctx) {
 }
 
 // One row per original file. Clicking opens the whole file with the sections used highlighted.
+// File name (full, never cut off) and a grey line: Ticket · VPN Gateway · closed 12 Mar 2026
+function referenceText(ref) {
+    const box = el('span', 'min-w-0 flex flex-col');
+    box.append(el('span', 'break-all text-xs text-[#0078d4] hover:underline', referenceLabel(ref)));
+    const details = [ref.kind, ref.product, ref.date ? `${ref.date_label || 'dated'} ${ref.date}` : null].filter(Boolean);
+    if (details.length) box.append(el('span', 'text-[11px] text-slate-500', details.join(' · ')));
+    return box;
+}
+
 function buildReferences(ctx, answerText) {
     // Only the files the answer actually cites (older chats also stored files that weren't used)
     const cited = citedFiles(answerText, ctx);
@@ -536,7 +545,7 @@ function buildReferences(ctx, answerText) {
         row.append(
             el('span', 'shrink-0 w-5 h-5 rounded border border-slate-300 text-[10px] text-slate-600 flex items-center justify-center', String(ref.n)),
             icon('fa-regular fa-file-lines text-slate-400 shrink-0'),
-            el('span', 'min-w-0 break-all text-xs text-[#0078d4] hover:underline', referenceLabel(ref)),   // full name, never cut off
+            referenceText(ref),
         );
         row.addEventListener('click', () => openReference(ref, ctx));
         list.appendChild(row);
@@ -838,11 +847,14 @@ function createAssistantBubble() {
 // Sending a question (streamed answer)
 // ---------------------------------------------------------------------------
 // While streaming, hide the model's internal "not found" signal; the server removes it from the final text
-const NO_ANSWER_MARKER = 'NO_ANSWER_IN_SOURCES';
+// Control lines the model starts some answers with; the server removes them, the UI hides them while streaming
+const ANSWER_MARKERS = ['NO_ANSWER_IN_SOURCES', 'NEEDS_CLARIFICATION'];
 function visibleText(text) {
     const trimmed = text.trimStart();
-    if (NO_ANSWER_MARKER.startsWith(trimmed)) return '';          // marker still arriving
-    return text.replace(NO_ANSWER_MARKER, '').replace(/^[\s:]+/, '');
+    if (trimmed && ANSWER_MARKERS.some(m => m.startsWith(trimmed))) return '';   // marker still arriving
+    let out = text;
+    ANSWER_MARKERS.forEach(m => { out = out.replace(m, ''); });
+    return out === text ? text : out.replace(/^[\s:]+/, '');
 }
 
 async function sendMessage() {

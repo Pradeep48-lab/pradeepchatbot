@@ -10,10 +10,32 @@ import json
 import logging
 import os
 import re
+import time
 
 log = logging.getLogger("chatbot.assistant")
 
 CHAT_DEPLOYMENT = os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT", "chat")
+# Small, fast model for helper tasks (follow-up rewriting, memory summaries). Falls back to the
+# main model if it isn't deployed yet, so the app keeps working during a rollout.
+FAST_DEPLOYMENT = os.environ.get("AZURE_OPENAI_FAST_DEPLOYMENT", "chat-mini")
+_fast_unavailable_until = 0.0
+FAST_RETRY_SECONDS = 600          # after a "not found", use the main model for 10 minutes, then try again
+
+
+def fast_completion(openai_client, **kwargs):
+    """chat.completions.create on the fast model, falling back to the main model if it's missing."""
+    global _fast_unavailable_until
+    if FAST_DEPLOYMENT and FAST_DEPLOYMENT != CHAT_DEPLOYMENT and time.monotonic() >= _fast_unavailable_until:
+        try:
+            return openai_client.chat.completions.create(model=FAST_DEPLOYMENT, **kwargs)
+        except Exception as e:
+            text = str(e)
+            if "DeploymentNotFound" in text or "404" in text:
+                log.warning("Fast deployment '%s' not found; using '%s' for helper tasks", FAST_DEPLOYMENT, CHAT_DEPLOYMENT)
+                _fast_unavailable_until = time.monotonic() + FAST_RETRY_SECONDS
+            else:
+                raise
+    return openai_client.chat.completions.create(model=CHAT_DEPLOYMENT, **kwargs)
 
 # ---------------------------------------------------------------------------
 # Attachments (screenshots and log files)
@@ -128,8 +150,8 @@ def rewrite_query(openai_client, question: str, history: list[dict], texts: list
     }] + image_parts(images)
 
     try:
-        response = openai_client.chat.completions.create(
-            model=CHAT_DEPLOYMENT,
+        response = fast_completion(
+            openai_client,
             messages=[{"role": "system", "content": REWRITE_PROMPT}, {"role": "user", "content": content}],
             temperature=0,
             max_tokens=120,
@@ -141,6 +163,72 @@ def rewrite_query(openai_client, question: str, history: list[dict], texts: list
     except Exception as e:
         log.warning("Query rewrite failed, using the original question: %s: %s", type(e).__name__, e)
         return question
+
+
+# ---------------------------------------------------------------------------
+# Conversation memory: summary of older turns
+# ---------------------------------------------------------------------------
+SUMMARY_PROMPT = """You keep running notes of a support engineer's troubleshooting chat.
+Update the notes with the new exchanges. Keep: the customer/environment, the product and setup
+(e.g. site-to-site VPN, firewall model), symptoms and exact error codes, what has been tried and the
+result, what was ruled out, and open questions. Drop pleasantries and repeated content.
+Write at most 8 short bullet points, max 120 words in total. Notes only, no advice."""
+
+
+def summarize_conversation(openai_client, previous_summary: str, turns: list[dict]) -> str:
+    """Fold older turns into a short running summary (fast model). Returns '' on failure."""
+    exchanges = "\n\n".join(
+        f"ENGINEER: {str(t.get('user_message', ''))[:800]}\nASSISTANT: {str(t.get('ai_message', ''))[:1200]}"
+        for t in turns
+    )
+    try:
+        response = fast_completion(
+            openai_client,
+            messages=[
+                {"role": "system", "content": SUMMARY_PROMPT},
+                {"role": "user", "content": f"Current notes:\n{previous_summary or '(none)'}\n\nNew exchanges:\n{exchanges}"},
+            ],
+            temperature=0,
+            max_tokens=250,
+        )
+        return (response.choices[0].message.content or "").strip()[:1500]
+    except Exception as e:
+        log.warning("Conversation summary failed: %s: %s", type(e).__name__, e)
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Source details: what kind of file, which product, which date
+# ---------------------------------------------------------------------------
+_PRODUCT_RE = re.compile(r"(?im)^[ \t]*(?:product|service|azure service|technology)[ \t]*[:\-][ \t]*(.{2,60}?)[ \t]*$")
+_DATE_RE = re.compile(
+    r"(?im)^[ \t]*(date closed|closed on|closed date|closed|resolved on|resolution date|last updated|updated)"
+    r"[ \t]*[:\-][ \t]*(.{4,40}?)[ \t]*$")
+_RUNBOOK_NAME = re.compile(r"(?i)(runbook|sop|playbook|guide|how-?to|procedure|kb\d*|wiki)")
+
+
+def source_details(title: str, passages: list[dict]) -> dict:
+    """Best-effort labels for a source file, from its name and any 'Product:' / 'Date closed:' lines.
+    Returns {"kind": "Ticket"|"Runbook"|"Document", "product": str|None, "date": str|None, "date_label": str|None}."""
+    stem = os.path.splitext(os.path.basename(title or ""))[0]
+    if re.fullmatch(r"\d{8,}", stem) or TICKET_TITLE_PATTERN.search(stem):
+        kind = "Ticket"
+    elif _RUNBOOK_NAME.search(stem):
+        kind = "Runbook"
+    else:
+        kind = "Document"
+    text = "\n".join(p.get("content", "") for p in passages)
+    product = _PRODUCT_RE.search(text)
+    date = _DATE_RE.search(text)
+    date_label = None
+    if date:
+        date_label = "updated" if "updat" in date.group(1).lower() else "closed" if kind == "Ticket" else "dated"
+    return {
+        "kind": kind,
+        "product": product.group(1).strip() if product else None,
+        "date": date.group(2).strip() if date else None,
+        "date_label": date_label,
+    }
 
 
 # ---------------------------------------------------------------------------

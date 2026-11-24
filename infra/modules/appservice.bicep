@@ -19,6 +19,8 @@ param appServicePlanName string
 param appServiceName string
 param openAiEndpoint string
 param chatDeployment string = 'chat'
+@description('Fast model deployment for follow-up rewriting and conversation summaries.')
+param fastDeployment string = 'chat-mini'
 param embeddingDeployment string = 'embedding'
 param searchEndpoint string
 param cosmosEndpoint string
@@ -103,6 +105,10 @@ resource appServiceApp 'Microsoft.Web/sites@2022-09-01' = {
         {
           name: 'AZURE_OPENAI_CHAT_DEPLOYMENT'
           value: chatDeployment
+        }
+        {
+          name: 'AZURE_OPENAI_FAST_DEPLOYMENT'
+          value: fastDeployment
         }
         {
           name: 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT'

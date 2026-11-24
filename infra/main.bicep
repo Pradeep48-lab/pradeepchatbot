@@ -76,6 +76,7 @@ module appService 'modules/appservice.bicep' = {
     entraTenantId: entraTenantId
     openAiEndpoint: openai.outputs.endpoint
     chatDeployment: 'chat'
+    fastDeployment: 'chat-mini'
     embeddingDeployment: 'embedding'
     searchEndpoint: search.outputs.endpoint
     cosmosEndpoint: cosmos.outputs.endpoint
