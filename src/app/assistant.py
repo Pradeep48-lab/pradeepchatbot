@@ -154,7 +154,7 @@ def rewrite_query(openai_client, question: str, history: list[dict], texts: list
             openai_client,
             messages=[{"role": "system", "content": REWRITE_PROMPT}, {"role": "user", "content": content}],
             temperature=0,
-            max_tokens=120,
+            max_completion_tokens=120,
             response_format={"type": "json_object"},
         )
         query = json.loads(response.choices[0].message.content or "{}").get("search_query", "")
@@ -189,7 +189,7 @@ def summarize_conversation(openai_client, previous_summary: str, turns: list[dic
                 {"role": "user", "content": f"Current notes:\n{previous_summary or '(none)'}\n\nNew exchanges:\n{exchanges}"},
             ],
             temperature=0,
-            max_tokens=250,
+            max_completion_tokens=250,
         )
         return (response.choices[0].message.content or "").strip()[:1500]
     except Exception as e:
@@ -330,7 +330,7 @@ def suggest_followups(openai_client, question: str, answer: str) -> list[str]:
                 {"role": "user", "content": f"Question:\n{question[:1500]}\n\nAnswer:\n{answer[:3000]}"},
             ],
             temperature=0.3,
-            max_tokens=150,
+            max_completion_tokens=150,
             response_format={"type": "json_object"},
         )
         items = json.loads(response.choices[0].message.content or "{}").get("questions", [])
@@ -374,6 +374,6 @@ def draft_customer_reply(openai_client, question: str, answer: str, customer_nam
             )},
         ],
         temperature=0.4,
-        max_tokens=700,
+        max_completion_tokens=700,
     )
     return (response.choices[0].message.content or "").strip()

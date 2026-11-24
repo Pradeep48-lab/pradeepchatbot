@@ -1,10 +1,13 @@
-fastapi
-uvicorn
-gunicorn
-openai
-azure-identity
+# Pinned to the versions this app was tested with, so a new library release can't change
+# behaviour on the next deploy. Upgrade deliberately: change a version, test in dev, then deploy.
+fastapi==0.165.0
+uvicorn==0.54.0
+gunicorn>=23
+openai==3.57.0
+azure-core==1.41.0
+azure-identity==1.27.0
 azure-search-documents==11.4.0
-azure-cosmos
-pydantic
-httpx
-azure-storage-blob
+azure-cosmos==4.17.1
+azure-storage-blob==12.31.1
+pydantic==2.13.5
+httpx==0.28.1

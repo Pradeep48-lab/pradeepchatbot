@@ -72,6 +72,23 @@ if (window.DOMPurify) {
     });
 }
 
+// The "General Azure guidance (not from our knowledge base)" section is set apart with a grey bar,
+// so engineers can see at a glance which part came from our tickets and which didn't.
+function markGeneralGuidance(target) {
+    target.querySelectorAll('h4').forEach(h => {
+        if (!/^General Azure guidance/i.test(h.textContent.trim())) return;
+        const box = document.createElement('div');
+        box.className = 'general-guidance';
+        h.before(box);
+        let next = h;
+        while (next && !(next !== h && /^H[1-4]$/.test(next.tagName))) {
+            const after = next.nextElementSibling;
+            box.appendChild(next);
+            next = after;
+        }
+    });
+}
+
 function renderMarkdown(target, markdown) {
     if (!window.marked || !window.DOMPurify || typeof markdown !== 'string') {
         target.className = 'whitespace-pre-wrap';
@@ -82,6 +99,7 @@ function renderMarkdown(target, markdown) {
         const html = marked.parse(markdown, { gfm: true, breaks: true });
         target.innerHTML = DOMPurify.sanitize(html, { FORBID_TAGS: ['img', 'style', 'form', 'input'] });
         target.className = 'md-answer';
+        markGeneralGuidance(target);
     } catch (err) {
         console.error('Markdown render failed:', err);
         target.className = 'whitespace-pre-wrap';
@@ -520,6 +538,21 @@ function referenceText(ref) {
     return box;
 }
 
+function referenceRow(ref, ctx, cited) {
+    const isCited = cited.has(ref.n);
+    const row = el('button', 'reference-file flex items-start gap-2.5 min-w-0 w-full text-left rounded-md px-2 py-1.5 hover:bg-[#f3f9fd]'
+        + (isCited ? '' : ' opacity-60'));
+    row.type = 'button';
+    row.title = `Open ${referenceLabel(ref)}` + (isCited ? '' : ' (retrieved, not cited in the answer)');
+    row.append(
+        el('span', 'shrink-0 w-5 h-5 rounded border border-slate-300 text-[10px] text-slate-600 flex items-center justify-center', String(ref.n)),
+        icon((ref.kind === 'Ticket' ? 'fa-solid fa-ticket' : 'fa-regular fa-file-lines') + ' text-slate-400 shrink-0 mt-0.5'),
+        referenceText(ref),
+    );
+    row.addEventListener('click', () => openReference(ref, ctx));
+    return row;
+}
+
 function buildReferences(ctx, answerText) {
     // Only the files the answer actually cites (older chats also stored files that weren't used)
     const cited = citedFiles(answerText, ctx);
@@ -536,19 +569,16 @@ function buildReferences(ctx, answerText) {
     head.append(toggle, el('span', 'text-[11px] text-slate-400', 'AI-generated content may be incorrect'));
 
     const list = el('div', 'flex flex-col');
-    refs.forEach(ref => {
-        const isCited = cited.has(ref.n);
-        const row = el('button', 'reference-file flex items-start gap-2.5 min-w-0 w-full text-left rounded-md px-2 py-1.5 hover:bg-[#f3f9fd]'
-            + (isCited ? '' : ' opacity-60'));
-        row.type = 'button';
-        row.title = `Open ${referenceLabel(ref)}` + (isCited ? '' : ' (retrieved, not cited in the answer)');
-        row.append(
-            el('span', 'shrink-0 w-5 h-5 rounded border border-slate-300 text-[10px] text-slate-600 flex items-center justify-center', String(ref.n)),
-            icon('fa-regular fa-file-lines text-slate-400 shrink-0'),
-            referenceText(ref),
-        );
-        row.addEventListener('click', () => openReference(ref, ctx));
-        list.appendChild(row);
+    // Closed tickets first, then runbooks and documents, each with a small heading
+    const tickets = refs.filter(r => r.kind === 'Ticket');
+    const others = refs.filter(r => r.kind !== 'Ticket');
+    const groups = [['Tickets', tickets], ['Documents', others]].filter(([, items]) => items.length);
+    groups.forEach(([label, items]) => {
+        if (groups.length > 1 || label === 'Tickets') {
+            list.appendChild(el('div', 'text-[11px] font-semibold uppercase tracking-wide text-slate-400 px-2 pt-1.5 pb-0.5',
+                `${label} (${items.length})`));
+        }
+        items.forEach(ref => list.appendChild(referenceRow(ref, ctx, cited)));
     });
     toggle.addEventListener('click', () => {
         const open = list.classList.toggle('hidden') === false;

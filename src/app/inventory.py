@@ -67,7 +67,7 @@ def parse_inventory_question(openai_client, question: str, history: list[dict]) 
             openai_client,
             messages=[{"role": "system", "content": PARSE_PROMPT.format(today=today)},
                       {"role": "user", "content": f"Earlier conversation:\n{convo}\n\nLatest message:\n{question}"}],
-            temperature=0, max_tokens=120, response_format={"type": "json_object"})
+            temperature=0, max_completion_tokens=120, response_format={"type": "json_object"})
         spec = json.loads(response.choices[0].message.content or "{}")
     except Exception as e:
         log.warning("Inventory question check failed, treating as a normal question: %s: %s", type(e).__name__, e)
