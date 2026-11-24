@@ -732,66 +732,6 @@ async function postJSON(url, body) {
     return data;
 }
 
-// Thumbs up / down under each answer
-function buildActions(sessionId, turnId, existingFeedback) {
-    const bar = el('div', 'answer-actions mt-2 pt-2 border-t border-slate-100 flex flex-col gap-2');
-    const row = el('div', 'flex items-center gap-1 flex-wrap');
-    bar.appendChild(row);
-
-    const thanks = el('span', 'text-[11px] text-slate-500 ml-1');
-    const up = el('button', 'feedback-btn p-1.5 rounded text-slate-400 hover:text-[#0078d4] hover:bg-slate-100');
-    const down = el('button', 'feedback-btn p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-slate-100');
-    [up, down].forEach(b => { b.type = 'button'; });
-    up.title = 'Helpful'; up.setAttribute('aria-label', 'Mark answer as helpful');
-    down.title = 'Not helpful'; down.setAttribute('aria-label', 'Mark answer as not helpful');
-
-    const commentBox = el('div', 'hidden flex flex-col gap-1.5');
-    const comment = el('textarea', 'w-full text-xs border border-slate-300 rounded-md p-2 outline-none focus:ring-2 focus:ring-[#0078d4] resize-none');
-    comment.rows = 2;
-    comment.maxLength = 1000;
-    comment.placeholder = 'What was wrong or missing? (optional — helps improve the knowledge base)';
-    const sendComment = el('button', 'self-end text-xs bg-[#0078d4] hover:bg-[#106ebe] text-white rounded px-3 py-1', 'Send feedback');
-    sendComment.type = 'button';
-    commentBox.append(comment, sendComment);
-
-    function paint(rating) {
-        up.innerHTML = ''; down.innerHTML = '';
-        up.appendChild(icon(rating === 'up' ? 'fa-solid fa-thumbs-up text-[#0078d4]' : 'fa-regular fa-thumbs-up'));
-        down.appendChild(icon(rating === 'down' ? 'fa-solid fa-thumbs-down text-red-600' : 'fa-regular fa-thumbs-down'));
-        up.setAttribute('aria-pressed', String(rating === 'up'));
-        down.setAttribute('aria-pressed', String(rating === 'down'));
-    }
-    paint(existingFeedback && existingFeedback.rating);
-    if (existingFeedback && existingFeedback.rating) thanks.textContent = 'Thanks for the feedback';
-
-    async function send(rating, text) {
-        try {
-            await postJSON('/feedback', { session_id: sessionId, turn_id: turnId, rating, comment: text || null });
-            paint(rating);
-            thanks.textContent = 'Thanks for the feedback';
-            return true;
-        } catch (err) {
-            thanks.textContent = 'Could not save feedback: ' + err.message;
-            return false;
-        }
-    }
-    up.addEventListener('click', async () => { commentBox.classList.add('hidden'); await send('up'); });
-    down.addEventListener('click', async () => {
-        if (await send('down')) {
-            commentBox.classList.remove('hidden');
-            comment.focus();
-        }
-    });
-    sendComment.addEventListener('click', async () => {
-        if (await send('down', comment.value.trim())) commentBox.classList.add('hidden');
-    });
-
-
-    row.append(up, down, thanks);
-    bar.append(commentBox);
-    return bar;
-}
-
 function buildSuggestions(questions) {
     if (!questions || !questions.length) return null;
     const wrap = el('div', 'suggestions mt-2 flex flex-col gap-1.5');
@@ -883,7 +823,6 @@ function createAssistantBubble() {
             [buildTicketsPanel(meta.similar_tickets),
              ctx.refs.length ? buildReferences(ctx, latestText) : buildLegacyCitations(meta.context)]
                 .forEach(node => { if (node) extras.appendChild(node); });
-            if (turnId) extras.appendChild(buildActions(meta.session_id || currentSessionId, turnId, meta.feedback));
             scrollToBottom();
         },
         addSuggestions(questions) {

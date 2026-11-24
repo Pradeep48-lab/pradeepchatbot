@@ -150,7 +150,8 @@ Each answer cites the original files it used:
 - **Click a file (or a marker)** to open the whole original file from the storage account, with every section the answer used highlighted; **Download** saves it. PDFs and other non-text files are downloaded, never rendered in the page.
 - **More variety per answer:** search takes the 20 best-ranked sections, then keeps at most `MAX_PARTS_PER_FILE` (3) from any one file, up to `SEARCH_TOP` (8) sections in total, so one very large file can't crowd out other tickets. (Files are split into ~2,000-character sections by the indexer; large combined exports are best split into one file per ticket.)
 - **Security:** the browser never sends a file path. `GET /source/{session}/{answer}/{n}` looks up source *n* on the user's own saved answer and reads that blob with the App Service's managed identity, which has **Storage Blob Data Reader on the `documents` container only**. Files over `MAX_SOURCE_BYTES` (5 MB) aren't opened.
-- **Settings:** `SEARCH_TOP` (8), `SEARCH_CANDIDATES` (20), `MAX_PARTS_PER_FILE` (3). `AZURE_STORAGE_ACCOUNT_URL` / `AZURE_STORAGE_CONTAINER` are set by Bicep.
+- **Only real matches become sources:** sections with a semantic ranker score below `MIN_RERANKER_SCORE` (1.5 of 4) are dropped before the model sees them, and the model is told to cite only the file(s) each statement was taken from.
+- **Settings:** `SEARCH_TOP` (8), `SEARCH_CANDIDATES` (20), `MAX_PARTS_PER_FILE` (3), `MIN_RERANKER_SCORE` (1.5; 0 turns the filter off). `AZURE_STORAGE_ACCOUNT_URL` / `AZURE_STORAGE_CONTAINER` are set by Bicep.
 - Chats saved before this change still open their sources normally.
 
 ## AI Features
@@ -165,7 +166,7 @@ Each answer cites the original files it used:
 | **Confidence (internal)** | The best semantic ranker score is still used to tell the model how well the documents match, so weak matches get a cautious answer. No badge is shown to users. | `CONFIDENCE_HIGH_SCORE`, `CONFIDENCE_MEDIUM_SCORE` |
 | **Suggested next questions** | **Off by default.** When enabled, three follow-up questions appear under each answer. | `ENABLE_SUGGESTIONS` (`false`; set to `true` to turn on) |
 | **Draft customer reply** | **Off by default** (no button, and `/draft-reply` returns 404). When enabled, turns a saved answer into a customer-ready email with internal details removed. | `ENABLE_DRAFT_REPLY` (`false`; set to `true` to turn on) |
-| **Feedback** | Thumbs up/down on every answer, with an optional comment on thumbs down. Saved on the chat record in Cosmos DB (`feedback.rating`, `feedback.comment`). | — |
+| **Feedback** | Removed from the UI (no thumbs up/down). The `/feedback` API still exists for a future re-enable. | — |
 
 **Finding knowledge gaps:** in Cosmos DB Data Explorer, query
 `SELECT c.user_message, c.feedback.comment, c.confidence.level FROM c WHERE c.feedback.rating = "down" OR c.confidence.level IN ("low", "none")`

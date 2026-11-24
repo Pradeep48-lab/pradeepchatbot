@@ -68,6 +68,9 @@ AZURE_SEARCH_SEMANTIC_CONFIG = os.environ.get("AZURE_SEARCH_SEMANTIC_CONFIG", "d
 SEARCH_TOP = int(os.environ.get("SEARCH_TOP", "8"))   # passages sent to the model per question
 SEARCH_CANDIDATES = int(os.environ.get("SEARCH_CANDIDATES", "20"))   # ranked results to choose those from
 MAX_PARTS_PER_FILE = int(os.environ.get("MAX_PARTS_PER_FILE", "3"))  # so one large file can't fill every slot
+# Semantic ranker relevance (0-4). Sections scoring below this are dropped before the model sees them,
+# so only files that really match the question can become sources. 0 turns the filter off.
+MIN_RERANKER_SCORE = float(os.environ.get("MIN_RERANKER_SCORE", "1.5"))
 
 AZURE_COSMOS_ENDPOINT = os.environ.get("AZURE_COSMOS_ENDPOINT")
 AZURE_COSMOS_DB_NAME = os.environ.get("AZURE_COSMOS_DB_NAME", "chatdb")
@@ -248,6 +251,9 @@ def search_internal_kb(query: str) -> tuple[list[dict], bool]:
     # Best results first, at most MAX_PARTS_PER_FILE sections from any one file
     docs, per_file = [], {}
     for doc in results:
+        score = doc.get("@search.reranker_score") if semantic_used else None
+        if score is not None and score < MIN_RERANKER_SCORE:
+            continue                       # weak match: not a real source for this question
         blob = blob_path_from_parent_id(doc.get("parent_id"), doc["title"])
         if per_file.get(blob, 0) >= MAX_PARTS_PER_FILE:
             continue
@@ -257,7 +263,7 @@ def search_internal_kb(query: str) -> tuple[list[dict], bool]:
             "content": doc["content"],
             "part": chunk_part(doc.get("chunk_id")),
             "blob": blob,
-            "score": doc.get("@search.reranker_score") if semantic_used else None,
+            "score": score,
         })
         if len(docs) >= SEARCH_TOP:
             break
@@ -350,8 +356,9 @@ RULES
   <sources>; never invent one. Don't put numbers on information from screenshots or attachments.
 - When a screenshot or log is attached, first state the exact error you see in it, then explain the fix.
 - If the sources disagree, say so and explain both.
-- Cite a source only if it actually supports what you wrote. Never cite a source just because it mentions
-  the same product or topic.
+- Cite ONLY the file(s) the information was actually taken from. Usually one file per statement is enough;
+  add a second number only when two files each support that statement. Never cite a source just because
+  it mentions the same product or topic, and don't cite files you didn't use.
 - If the sources do not contain the answer, start your reply with the exact line NO_ANSWER_IN_SOURCES,
   then politely say you couldn't find this in the knowledge base and what details would help. In that
   case cite no sources and do not guess.
